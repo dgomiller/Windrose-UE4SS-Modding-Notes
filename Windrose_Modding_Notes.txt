@@ -136,6 +136,46 @@ it, the swap wipes it anyway on its way through). The only order that actually w
 FIRST, THEN set values — a plain write made AFTER the swap has already settled sticks completely
 normally. Don't bother trying to preserve a look across a sex change; re-apply it after, not before.
 
+### 2d. A second, always-populated mesh-attachment array exists separately from the pick list
+
+An actor can render a full set of visible clothes despite having ZERO customization controllers
+for that category (§2c's "list every customizable slot" call can legitimately return nothing for
+"armor"-type slots on some actor bodies that are still visibly fully dressed). The reason: the
+mesh-controller list is a *pick list* — which option is currently selected per slot, only for
+slots the game exposes as player-changeable — not the thing actually attached to the skeleton. The
+real attachment array is a separate component property, populated independent of whether that slot
+has any selectable controller at all. A class with no controllers for a body region can still have
+several attachment entries actually wearing something there.
+
+Each entry in that array is itself a struct (the "type path embedded in the raw printed form"
+shape from §10/2b, not §2c's shape — check which shape you've got before picking a recipe). Two
+fields matter: which body-part slot it represents (an enum value, decodable from the object dump)
+and a reference to the live mesh component actually attached for that slot — a real component, not
+just an asset path, so it takes the same mesh-swap calls any other mesh component does.
+
+Confirmed dead, two independent tests, two call orderings: mutating an entry in this array (or its
+attached mesh component) AFTER the composite has already built does not stick — same "reports
+success, rebuild count increments, rendered mesh never changes" signature as §2a's dead end.
+Confirmed working: setting the composite's PRE-build params so a *different class's* outfit/body
+bakes in at build time — post-build mutation of the attachment array itself is dead; pre-build
+substitution of what gets built into it is not.
+
+A useful general-purpose tool falls out of this: given a body-part enum value, walk the attachment
+array for the matching entry and swap just that one slot's mesh — hide, swap the mesh asset,
+rebind the swapped component's leader-pose to the actor's own base body mesh (so it keeps animating
+correctly), then show again. Useful specifically when a cross-class pre-build params swap (the fix
+above) bakes in one body-shape-mismatched piece from the donor class, because the donor's mesh for
+that slot was built for a different base skeleton than the actor you applied it to actually wears.
+
+Class Default Object reads (§7's "read a buildable actor's composite setup with zero spawn cost"
+trick) do NOT generalize to pawn classes. A buildable/placeable actor's class default owns a real,
+pre-populated composite component, readable for free. A pawn class's CDO resolves fine and has a
+valid composite component, but its controller list reads back empty — pawns build their composite
+at spawn time via an explicit runtime call rather than having it pre-populated on the class
+default. Surveying a pawn roster's customization options without paying a live-spawn cost isn't
+possible via this route; confirm which kind of class you're dealing with before assuming the free
+CDO read will work.
+
 ---
 
 ## 3. THE CRASH TRAPS (each cost real debugging hours)
@@ -270,6 +310,15 @@ mod-spawned actors on its own):
 - If restoring a mix of static/inert objects and AI-driven actors, split the work: static objects
   can restore near-instantly; AI-driven actors wake a controller/perception stack each and should
   be paced out, not all fired in the same frame.
+- **If your spawn function has a "don't bother tracking this one" fast path for pure decoration
+  (skip the collection/bookkeeping step an AI-driven actor gets), anything spawned through that
+  fast path will never reach whatever deferred per-actor hook/callback system your restore uses —
+  by construction, not by bug.** This is easy to not notice, because it only shows up as "my restore
+  fixup for this one prop type quietly never runs" with no error anywhere — the match condition can
+  be perfectly correct and it still won't fire, because the actor never entered the pipeline that
+  would have checked it in the first place. Any restore-time fixup a purely-decorative object needs
+  has to happen inline, in the same code path that spawns it and reads its saved data — not in
+  whatever generic post-process/hook system the AI-driven actors use.
 - Guard your own "record this placement" function with a flag while a restore is actively
   running, so restoring from the save doesn't re-record what it's restoring.
 - If a save file gets one write per placement, buffer writes during a bulk restore and flush
