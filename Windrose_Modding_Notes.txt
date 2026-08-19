@@ -1,0 +1,931 @@
+# Windrose Modding — Hard-Won Knowledge
+
+Durable, engine-level facts learned while building UE4SS Lua mods for Windrose (Kraken Express,
+UE 5.6, single-player, unofficial modding — game patches can break class paths). General to
+modding this game, not tied to any one mod's own code. A couple of entries use a specific mod's
+internal function names purely as a worked example of applying the underlying technique — the
+technique itself is what's durable, not the name.
+
+---
+
+## 1. Spawning an actor that actually works
+
+```
+BeginDeferredActorSpawnFromClass(world, class, transform, CollisionHandling=1, Owner=nil, ScaleMethod=1)
+  -> [deferred window: set AIControllerClass, CompositeMeshComponent params here]
+FinishSpawningActor(actor, transform, ScaleMethod=1)
+  -> SpawnDefaultController()
+  -> ActivateCharacter()          <- native "bring this NPC to life"; without it they're frozen + naked
+```
+Resolving an asset path cheaply: try `StaticFindObject` first (already-loaded classes resolve
+instantly), fall back to `LoadAsset` then `StaticFindObject` again for anything not yet in memory.
+
+**The deferred window between the two spawn calls is the only place pre-build state can be set.**
+
+---
+
+## 2. The composite (appearance) system — what sticks and what doesn't
+
+`CompositeMeshComponent` has `DefaultParams`, `ArchetypePreset`, `BodyTypeParams`.
+
+| Set pre-build | Sticks? |
+|---|---|
+| `DefaultParams` (the OUTFIT, e.g. Senkamati feather armor) | **YES** |
+| `ArchetypePreset` (BODY / SKIN / HAIR) | **NO — `BeginPlay` re-randomizes it** |
+
+Proven live: with an archetype preset pinned pre-build, 7 spawns of the same class rolled 5
+different ethnicities anyway. Confirmed on multiple unrelated classes (a crew pawn, a citizen
+walker). **Do not retry this approach — it's a wall, not a bug to work around.**
+
+Crew archetypes live at
+`/R5BusinessRules/Character/Customization/NPC/ShipCrew/Sailor/Preset/DA_Mob_Regular_Sailor_Preset_Archetype<Ethnicity>`
+(Adventurer, African, Albion, Fable, Native, Orient, Scum). Mobs generally use ONE shared preset
+per class, which is why some mob types never show visual variety no matter how many times you
+spawn them.
+
+**Consequence:** normalize appearance POST-build (material swaps + mesh replaces), not pre-build.
+"Fable" is an *ethnicity* label here, not a hero body — `MI_Fable_Male_*`-style materials swap
+like any other skin.
+
+### 2a. Post-build: a genuine ENGINE FUNCTION can work where a raw property write can't
+
+Two unrelated properties on the composite component both showed the same dead-end signature
+post-build: set the property, force a rebuild via the documented trigger sequence, the rebuild
+reports genuine success (property visibly changed, build count incremented) — and the actual
+rendered mesh never changes. Looked like a hard rule: "post-build composite writes are consumed
+once at construction, never re-read."
+
+**It isn't a hard rule — it's specific to raw property writes.** The same component also exposes
+dedicated SETTER FUNCTIONS for some of these same concepts, discoverable by searching the object
+dump for every function the class declares (not by guessing from its properties). Calling the
+genuine function post-build **actually worked** — visibly changed and stayed changed, confirmed
+via before/after readback. A component can have BOTH a property that's build-time-only AND a
+function that achieves the same conceptual change and DOES work live; finding one dead end
+doesn't mean the whole concept is dead.
+
+**How to find the real functions**: UE4SS emits a full object dump at
+`<GameRoot>/Binaries/Win64/ue4ss/UE4SS_ObjectDump.txt` — plain text, greppable. Search for
+`Function /Script/<Module>.<Class>:` to list every function a class declares, each followed by
+its parameter properties on subsequent lines (bracket-indexed by offset, typed). Worth checking
+whenever a property-based approach hits the "reports success, never renders" wall — a working
+function may already exist right next to the property that didn't.
+
+**Caveat — a documented function is not necessarily a SAFE one.** See §3g.
+
+### 2b. Related tricks from the same investigation
+
+- **A boolean query function that asks "is X changeable" is a hint, not proof, that a live setter
+  exists** — it typically answers "can the player-facing customization UI edit this", not "will a
+  script write to the matching property actually render." Confirmed TRUE on a class whose
+  matching property was independently confirmed build-time-only-dead (§2a). Still worth checking
+  the object dump for a same-named setter function sitting near the query function — a real
+  signal, just not a guarantee.
+- **A gameplay tag is usually a trivial one-field struct** (a single name field) — confirm via the
+  same struct-drilling technique as §10, but once confirmed, WRITING one back is much simpler than
+  reading an unfamiliar struct: a plain script table (`{ FieldName = "value" }`) works directly as
+  the argument, no struct-drilling needed for the write direction, the same way simple math
+  structs (a 3D vector, as `{X=,Y=,Z=}`) already do.
+- **Bracket-indexing an array-of-structs also returns a wrapper that needs unwrapping** — not just
+  arrays of object references (already known: indexing returns a remote-param wrapper, not the
+  element itself, fixed by calling an unwrap method on it). The exact same wrapper-and-unwrap
+  requirement applies to struct-valued array elements too; a probe that reads back empty/blank
+  values from an otherwise-successful array read is almost certainly missing this step, not proof
+  the array itself is empty.
+
+### 2c. A second unfamiliar-struct shape exists — check which one before picking a recipe
+
+The "type path embedded in the raw printed form" shape §10/2b already document (extract the path,
+resolve the type object, walk its declared properties) is not the only shape a struct value can
+print as. A struct returned from inside an array element can instead print with NO module/type
+path at all, just a generic marker plus a raw memory address. Calling the usual "get this value's
+class" accessor on it is a dead end too — it returns a generic placeholder object with zero
+declared properties, not the specific type. **The fix for THIS shape is simpler, not the same
+recipe reapplied**: the value itself directly supports asking for its own name AND walking its own
+declared properties directly — no separate type-resolution round-trip needed at all. Check which
+shape you've got by pattern-matching the raw printed form before picking a recipe; guessing wrong
+just wastes a round-trip, doesn't break anything.
+
+This mattered in practice: a component's "list every customizable body-part slot" function
+returned exactly this second shape, and recognizing it (rather than retrying the §10 recipe that
+had worked on an unrelated struct earlier) is what actually got real field data back — each slot's
+current pick, how many options exist, whether it's currently editable, and a tag naming which body
+part it is. Confirmed live: a live actor's live picks are independently writable per-slot this
+way, once the values are readable at all — a genuinely different, more granular customization path
+than swapping a whole preset data asset or matching a component by name, and worth checking for on
+any similarly-composite-driven character system before assuming preset-swapping is the only lever
+available. Availability of any one slot is NOT uniform across actor types, either — the same named
+slot showed up locked on some actor instances and freely editable on others, so confirm per actor
+type rather than assuming a result generalizes.
+
+A related dead end from the same investigation: a second-guess "maybe THIS function bypasses the
+availability gate" test (trying an alternate setter sitting right next to the one already known to
+respect an `IsXAvailable()`-style check) confirmed the gate is enforced natively inside the
+function itself, not just a convention the already-working code chose to follow — it ran with no
+error, but silently changed nothing when the availability check would have refused. Worth ruling
+out this way (call it, check state before/after) rather than assuming a sibling function must
+differ just because it exists.
+
+A native sex-change function on this kind of composite character system can rebuild the whole
+mesh-controller list as a side effect, wiping picks either side of the call — not just a
+stale-value issue. Confirmed live, round-tripped one sex then back: the controller set partially
+collapses on one side (most categories not just zeroed but absent from the list entirely) and,
+more importantly, swapping back restores the full original shape (same categories, same option
+counts as before) but resets every current value back to its default — none of the original picks
+survive, even ones set BEFORE the sex change (confirmed: setting a value pre-swap does not protect
+it, the swap wipes it anyway on its way through). The only order that actually works: change sex
+FIRST, THEN set values — a plain write made AFTER the swap has already settled sticks completely
+normally. Don't bother trying to preserve a look across a sex change; re-apply it after, not before.
+
+---
+
+## 3. THE CRASH TRAPS (each cost real debugging hours)
+
+### 3a. Stale UObject pointers — the big one
+If you cache a resolved `UObject` at module scope behind a one-shot "already tried" flag, that
+pointer **outlives world loads and GC**. Handing a dangling UObject to `SetSkeletalMesh` /
+`SetMaterial` (or similar) is a **native crash `pcall` cannot catch.**
+
+Fix pattern: validate `:IsValid()` on EVERY use, re-resolve when dead, and cap retries so a
+genuinely-missing asset doesn't re-trigger `LoadAsset` every single pass.
+
+Symptoms that mean "stale pointer": fine on a fresh session, crashes only after reloading or
+despawning things for a while, hits different actors each time, never reproduces on demand.
+
+### 3b. Log BEFORE the dangerous call, never after
+A native crash never reaches your success line. Print immediately *before* a risky operation
+(component destroy, mesh/material swap), not after. That single habit is what actually localizes
+a crash to one exact line instead of "somewhere in this function."
+
+### 3c. Component surgery during world load
+Destroying components (perception, nameplate, interaction) while an AI is still initializing
+crashes. Defer any component-stripping to a post-process pass several seconds after load,
+spaced out between actors rather than done all at once.
+
+### 3d. Spawning into a not-yet-live world
+The player pawn **exists during the loading screen** — its presence is NOT proof the world is
+live. Gate real work on the player actually MOVING (horizontal displacement), not just existing.
+Also watch out for new work landing in the same frame as any of your own load-time bootstrapping.
+
+### 3e. Two composite builds in one frame
+Two composite-mesh spawns in the same instant can crash. Debounce whatever triggers spawning
+(e.g. a few hundred ms) rather than allowing back-to-back same-frame spawns.
+
+### 3f. `StaticFindObject("/Script/R5.<Component>")` is NOT universally broken
+It returns nil for some R5 component classes (e.g. an ability-system component) while resolving
+fine for others (marker components, interaction-target components). **Measure each path
+individually; don't generalize from one failure.** For component classes that won't resolve by
+`StaticFindObject`, reach them by PROPERTY off the actor instead.
+
+### 3g. Native key-bind registration is only safe during initial mod load
+Calling the engine's key-bind registration API again LATER — e.g. from a runtime poll loop, to
+apply a remapped key live without a restart — reliably crashed the game itself (an access
+violation inside the game's own executable, confirmed via crash dump — not a script error, not
+something `pcall` can catch). The exact same remap works fine (just doesn't take effect until a
+restart) when the call happens only once, synchronously, during the mod's initial load. Bind
+every key exactly once at startup; treat "live keybind rebinding" as needing a full game restart
+to apply, not a runtime re-registration call.
+
+### 3h. A function existing in the object dump doesn't mean it's safe to call
+Found a real, dedicated setter function for changing a body/appearance-related property live (see
+§2a for why this looked promising — a genuine function, not a build-time-only property write).
+Called it with correctly-typed arguments, matching the parameter list read straight from the
+object dump. **It crashed the engine natively, twice in a row, on two separate live tests.**
+`pcall` around the call caught nothing — not even the wrapping function's own FIRST log line
+(printed immediately after the `pcall` returns) ever appeared, meaning execution never came back
+to the script VM at all; the same "uncatchable, no trace" signature as every other native crash in
+this list. A sibling function on the exact same class, taking a conceptually near-identical
+argument, worked perfectly with zero issues (§2a). **The object dump proves a function EXISTS and
+tells you its signature; it proves nothing about whether calling it is safe.** Treat any first
+live call to a newly-discovered engine function as a real crash risk regardless of how reasonable
+the theory behind it is, especially for anything that mutates a live pawn's customization/
+composite state — save first, or accept the game may need a hard restart.
+
+### 3i. A runtime transform call on a Static-mobility component silently no-ops visually
+The call **succeeds** (returns fine, the actor's own logged position updates correctly) but the
+RENDERED MESH stays exactly where it was — because the component's mobility is still Static, and
+Static components don't get re-evaluated by the render thread after their initial placement. The
+transform is genuinely correct in game state; only the on-screen mesh is stale. Symptom that gives
+this away: walking far enough to force the actor to stream out and back in "fixes" it, since
+streaming rebuilds the render proxy from scratch. Fix: set the component's mobility to Movable
+ONCE before the first runtime move — once Movable, every subsequent transform call updates the
+render thread every frame, no special handling needed after that.
+
+### 3j. A function "safe" at keyboard-driven call rates isn't necessarily safe at UI-driven rates
+A visibility-toggle hack (hide the actor, then immediately unhide it — meant to force the render
+thread to re-register an actor's state after a move) had been living in a live-edit/nudge function
+for a long time with zero problems, because it only ever fired at the rate a human holding a
+keyboard key produces — and this UE4SS build silently drops most keydown-repeat events for a held
+key, so the EFFECTIVE call rate from even an actively-held key has always been much lower than the
+key's nominal OS repeat rate. Wiring the SAME function to a UI element with a real, undropped
+repeat rate (a held button/key in a separate window, ~10 calls/sec sustained) crashed the engine
+natively within seconds, with **nothing trapped in the log** — same "uncatchable, no trace"
+signature as §3h above. **Isolated by a controlled A/B test, not by guessing**: throttling the
+call RATE alone (down to ~2 calls/sec) did NOT stop the crash; disabling just the suspect call —
+while leaving the rate LESS throttled (~4-10 calls/sec) — DID. This confirmed the specific call was
+the actual cause, not raw frequency; a plausible-looking cost center found first (in this case, a
+same-function full-file read/rewrite for persistence) turned out to be a real but much smaller
+concern, not the crash. **Lesson**: before wiring any UI element with a natural high, undropped
+repeat rate to an existing function, audit everything that function does per call — a
+component/render-state mutation that was fine at human-keypress frequency is not proven fine at
+10x that, sustained — and the way to find out which specific line is the problem is to
+disable/throttle candidates ONE AT A TIME and retest, not to fix the first plausible-looking cost
+and declare victory.
+
+### 3k. A function defined BEFORE a `local function` it calls silently binds to a global instead
+A console command broke completely — every call failed with "attempt to call a nil value (global
+'someHelperFunction')" — despite that helper genuinely existing as a `local function` elsewhere in
+the exact same script file, and despite several OTHER callers in that same file working fine.
+Root cause: Lua's `local` scoping is purely LEXICAL (by source position), not by call-time order.
+A `local function foo()` statement creates the local binding at THAT POINT in the file; any code
+written ABOVE that line in the same file — even a function that only ever executes much later,
+long after the whole file has loaded — permanently resolves a bare reference to `foo` as a GLOBAL
+instead, because at the moment the compiler parsed that earlier code, no local named `foo` existed
+yet in scope. This has nothing to do with when either function is actually CALLED at runtime; it's
+fixed forever at parse time by source position alone. The broken caller here had been added near a
+thematically-related function earlier in the file, textually before the shared helper it depended
+on (which had been relocated further down during unrelated work) — an easy mistake to make, since
+nothing about "add this function near its similar siblings" prompts checking what's declared
+`local` further down. **Fix**: move the caller to any point in the file after the `local function`
+declaration it depends on (or forward-declare the local at the top of the file and assign it
+later, if ordering can't be controlled). **Diagnostic signature**: the error names the dependency
+as a "global" even though it's genuinely declared `local` somewhere in the same file — that
+mismatch (declared local, but the runtime calls it a nil global) is the tell; grep the file for
+both the call site and the actual `local function`/`local x =` declaration before assuming the
+called function itself is broken or missing.
+
+---
+
+## 4. Persisting and restoring actor state across a world load
+
+If your mod needs to re-create actors on the next world load (the game does not persist
+mod-spawned actors on its own):
+
+- `RegisterInitGameStatePostHook` fires **several times per load** (once for the menu, then
+  multiple times for the real destination map). Use a **latest-fire-wins generation counter**,
+  NOT a simple lock — a lock lets an early (menu) fire swallow the real world-load fire, then
+  time out silently with nothing ever restored, and no error to explain why.
+- Wait for the player pawn to exist, THEN wait for the player to actually **move** — only then
+  treat the world as genuinely live (see §3d; the pawn existing during the loading screen is not
+  enough).
+- If restoring a mix of static/inert objects and AI-driven actors, split the work: static objects
+  can restore near-instantly; AI-driven actors wake a controller/perception stack each and should
+  be paced out, not all fired in the same frame.
+- Guard your own "record this placement" function with a flag while a restore is actively
+  running, so restoring from the save doesn't re-record what it's restoring.
+- If a save file gets one write per placement, buffer writes during a bulk restore and flush
+  once — one file open/write/close per spawn adds up fast on a large restore.
+- Never fail silently. Log both "still waiting" and "gave up" cases explicitly — a silent restore
+  failure with no log trace is much harder to diagnose than an obviously-wrong log line.
+
+---
+
+## 5. Peace / faction mechanics
+
+- Friendly faction asset: `/Game/Gameplay/Character/Common/Relationship/Params/DA_Player_Crew_Faction`
+  — load it **directly**; don't depend on a live crew existing to reference it.
+- **Goats:** the aggressive goat variant extends the "mega" brawler brain and will fight the
+  crew. Fix = give it the passive/prey variant's AI controller + strip its memory/threat-agent
+  components (the ones driving perception-based aggression). A same-species brain swap (e.g.
+  goat-to-goat) is safe; forcing an unrelated "crew" brain onto a wild animal FREEZES it instead.
+- Some animals are docile only because a dedicated "friendly" subclass exists for them
+  separately from the wild version — check for that before assuming a faction change alone will
+  do it.
+- Humanoid NPCs generally respect the friendly faction; wild animals largely ignore it and need
+  the AI/controller swap instead.
+- **To make something HOSTILE: simply don't apply the friendly faction.** It keeps its own
+  default behavior.
+
+---
+
+## 5b. Movement: THIS GAME DOES NOT USE THE UE NAVMESH
+
+Every AI pawn carries a Mercuna ground-navigation component
+(`/Script/R5Mercuna.R5MercunaGroundNavigationComponent`). Windrose navigates with **Mercuna**, a
+third-party navigation system, not Unreal's built-in navmesh. Consequences:
+
+- `UAIBlueprintHelperLibrary::SimpleMoveToActor` **does nothing.** It doesn't throw and doesn't
+  return failure — it posts into a nav system these pawns never read. Any log line claiming "move
+  order issued" off the back of it is meaningless.
+- Reach the component **by property** off the pawn, never `StaticFindObject` on the component
+  class. Never cache it (dangling pointer across GC/world reload, see §3a).
+- The relevant API (`UMercunaGroundNavigationComponent`):
+  - `TrackActor(Actor, Distance, Speed, Offset, UsePartialPath)` — **continuous follow. Use this**
+    for "follow the player/another actor" behavior.
+  - `MoveToActor(Actor, EndDistance, Speed, UsePartialPath)` — one-shot. Re-issuing it every tick
+    can restart pathfinding before the pawn takes a step, which looks exactly like "ignored."
+  - `Stop()` / `CancelMovement()`, `PauseNavigation()` / `ResumeNavigation()`
+  - `SetNavGridToBest()` — **no nav grid = every order silently discarded.** Rule this out first
+    when a pawn won't move at all.
+  - `GetRemainingPathLength()`, `GetPathInfo(Valid, DistanceToEnd)` — the only honest way to know
+    whether a path actually exists. A speed argument of 0 means "use the pawn's own default
+    speed."
+- **Diagnosing a pawn that won't move**, from path length + speed:
+  - path > 0, speed > 0 → working
+  - path > 0, speed ≈ 0 → a path exists but something is cancelling it every frame (check the
+    pawn's own StateTree/behavior logic)
+  - path ≤ 0 forever → no route: no nav grid, navigation paused, or the goal is off-grid
+- **Distance alone never proves following.** If the player walks toward a frozen pawn, the
+  distance still shrinks and reads as "success." Check the distance while standing STILL, or
+  read the actual speed/path values instead.
+
+---
+
+## 6. Development workflow that works
+
+- **Run a Lua syntax/reference check before treating any edit as done.** Compiling alone is NOT
+  enough — a Lua compiler happily accepts a call to a function that doesn't exist; that's a
+  runtime error, not a syntax one, and it can silently kill an entire feature with no compile-time
+  warning. A lint pass worth having: (1) every script compiles, (2) every bare function call
+  resolves to something actually defined or a known engine API, (3) every config-style constant
+  reference actually exists in your config.
+- If using `lupa` (a Python Lua binding) for that check, note it may run a stricter/newer Lua
+  version than UE4SS's own runtime — useful as an early-warning canary, but don't treat a lupa
+  pass as proof the exact same code will behave identically in-game.
+- **Never generate Lua by templating it out of a Python (or other language) string/heredoc.**
+  Escaping special characters through two languages at once has silently produced broken output
+  (literal newlines inside a Lua string) and silently failed to match/apply an intended edit.
+  Edit Lua files directly with a real editor for anything involving escape sequences.
+- Verify config-table refactors by actually loading/executing the config file and asserting on
+  keys/table sizes, not just by eye — large data tables are easy to silently truncate or misalign
+  during a manual edit.
+- Wrap all engine-touching Lua calls in `pcall`. Keep game-version-dependent strings/paths
+  isolated to one config file rather than scattered through logic files.
+- UE4SS's built-in GUI console is an OpenGL window running on an external render thread — turn it
+  off for normal play; it's a debug tool, not something to leave enabled.
+- **Undo/redo systems that only ever re-spawn (never destroy) need special handling for any
+  operation that destroys-and-recreates something IN PLACE** (e.g. cycling an object to the next
+  variant in a list). If such an operation doesn't explicitly hand its own undo step a reference
+  to the new live replacement, a later "undo" can spawn a duplicate on top of the still-live
+  replacement instead of cleanly reverting it. This is easy to miss because a pure despawn (where
+  the spot is simply left empty) doesn't have the problem — only destroy-and-recreate does.
+- **A game's own native keybinds can silently eat an ENTIRE modifier key for UE4SS, not just one
+  binding — check systemically, not one combo at a time.** Confirmed live: a game that bound its
+  native Dodge action to plain `Ctrl` broke every single one of UE4SS's Ctrl-based defaults at
+  once, because the game's own input handling claims `Ctrl` before UE4SS's key-hook layer ever
+  sees a `Ctrl+X` combo reach it:
+  - **UE4SS's built-in "Keybinds" mod** ships dev/reverse-engineering tools on Ctrl+key combos
+    out of the box (Ctrl+J ObjectDumper → `DumpAllObjects()`, dumping every loaded UObject + its
+    properties to `UE4SS_ObjectDump.txt`; Ctrl+Num7 DumpAllActors; Ctrl+H/Ctrl+Num9 C++/UHT
+    header generators; Ctrl+Num8 DumpStaticMeshes; Ctrl+Num6 DumpUSMAP). In the confirmed case,
+    Ctrl+J produced no dump file and no log line at all — and since the root cause is the shared
+    `Ctrl` modifier, not anything specific to J, there's no reason to expect the other five behave
+    differently. Test one, and treat the rest as "assume broken until proven otherwise," not as
+    independently reliable.
+  - **UE4SS's own hot-reload system** can be hit by the exact same problem, and its case is
+    worse: the modifier isn't just conventionally Ctrl, it's **hardcoded** in
+    `UE4SS-settings.ini` — the `HotReloadKey` setting only lets you change the second key
+    (default `R`); the doc comment states outright that Ctrl itself is always required. Confirmed
+    live: hot-reload never worked in the same project as the Ctrl+J failure above, same root
+    cause, with no rebind available to fix it (unlike the Keybinds-mod tools, where changing the
+    second key is possible but doesn't help either — Ctrl itself is what's actually blocked).
+  - **The workaround differs by category.** A plain callable Lua function (`DumpAllObjects()`,
+    `DumpAllActors()`, etc.) can be wrapped in a `RegisterConsoleCommandHandler` command instead
+    of a keybind — console text input doesn't compete with the game's own key bindings at all.
+    Hot-reload has **no Lua-callable equivalent to wrap** — UE4SS exposes only the native keybind
+    and the "Restart All Mods" button in its own GUI console (`GuiConsoleEnabled`/`Visible` in
+    `UE4SS-settings.ini`, normally left disabled for play) as triggers, no global function — so
+    that GUI button is the only way left to reload mods short of a full game relaunch, if the
+    hot-reload keybind is broken and can't be fixed.
+  **The general lesson**: UE4SS's various default bindings are generic, unverified against any
+  specific game's own input map. Before relying on ANY of them, confirm they actually fire (a log
+  line, an output file) — and if one sharing a modifier key turns out broken, suspect every other
+  binding sharing that same modifier, not just the one you happened to test.
+- **A common companion mod: "CheatManagerEnablerMod".** Many shipping Unreal games never
+  instantiate a `CheatManager` object on the PlayerController by default, which silently no-ops
+  every native `exec` cheat command (they're UFUNCTIONs on CheatManager — no instance, no
+  dispatch, and no error either, just nothing happens). This small mod hooks
+  `PlayerController:ClientRestart` and constructs one (using the game's own `CheatClass` if it
+  specifies one, otherwise the generic engine default) if it doesn't already exist. If you're
+  relying on another mod's native console commands (e.g. one that wraps `summon`/`set`) and they
+  silently do nothing, check whether this mod (or equivalent) is installed and actually running.
+- **This game's actual process name is `Windrose-Win64-Shipping.exe`, NOT `R5-Win64-Shipping.exe`**
+  — confirmed via a mod's own logged "game executable" path and cross-checked live with a process
+  list. `R5` is the internal project/folder name (`R5/Binaries/Win64/...`, every install path),
+  which makes it an easy, silent wrong guess for the PROCESS name specifically — checking for
+  `R5-Win64-Shipping.exe` always reports "no matching process," even while the game is genuinely
+  running, with no error to flag the mistake. A "is the game running" check that never once
+  reports the game as running, across many real sessions, is itself the tell that the process name
+  is wrong — worth a live, unfiltered process-list spot-check for the real name if that pattern
+  ever shows up again.
+- **To confirm whether a class path is a genuine vanilla game asset (not something a mod added),
+  cross-reference it against the game's own asset manifest** rather than guessing from the path
+  shape alone — Windrose ships one (`Manifest_UFSFiles_Win64.txt`, listing every `.uasset` under
+  `R5/Content/**`). A short class name that resolves there is confirmed stock content by
+  construction, not by inference.
+- **Fully removing a feature (vs. merely disabling it) in a UE4SS Lua mod means finding every
+  wiring point, not just the implementation.** A typical toggleable feature is wired through: a
+  config default (plus a matching line in any user-override file), the implementation itself,
+  init-time registration/wiring, a keybind entry if it has one, and a settings-UI toggle entry if
+  it's player-facing — miss one and the "removed" feature is still reachable from somewhere.
+  Documentation needs the same sweep: a removed feature can be described in several separate
+  places per doc (a top-of-file summary blurb, its own dedicated feature section, AND a
+  config-reference list), so grep the whole doc set for the feature's name rather than trusting
+  the first mention found and stopping there.
+
+---
+
+## 7. Useful class paths
+
+```
+Player pawn class name contains  : R5Character
+Crew (regular / officer)         : /Game/Gameplay/Character/AI/Crew/{Regular,Officer}/Faction/Player/BP_Mob_Crew_{Regular,Officer}_Player
+Townsfolk                        : /Game/Gameplay/Character/AI/NPC/Handyman/Handyman_<Prof>/BP_NPC_Handyman_<Prof>
+                                   /Game/Gameplay/Character/AI/NPC/Citizen/BP_NPC_Citizen_{Walker,Worker}
+Senkamati mobs                   : /Game/Gameplay/Character/AI/Mob/SenkamatiCorrupted/Regular_<Type>/BP_Mob_SenkamatiCorrupted_Regular_<Type>
+Goats / Boar                     : /Game/Gameplay/Character/AI/Mob/Goat/{GoatF,GoatM}/... , .../Mob/Boar/Friend/BP_Mob_Boar_Friend
+DROWNED                          : /Game/Gameplay/Character/AI/Mob/Drowned/BP_Mob_Drowned_{Naked,Armored}_Gamescom
+Map                              : /Game/Maps/GYM/Genlandia/GenlandiaMulty
+```
+
+**Buildable "employee" posts (trader tables, etc.) can render their vendor directly on the building
+block itself, not as a separate NPC.** A visible person standing at a build-menu piece isn't proof
+it's a spawned actor — check the class's declared parent chain first. In this game, the trader-post
+family's parent is a building-block subclass (itself a crafting-station subclass), not a pawn/AI
+class at all; each one's Class Default Object owns a composite-mesh component directly, the same
+system that builds a character's body out of swappable pieces, just attached to the building-block
+actor instead of a pawn. No `AIController`/`PawnClass`/separate-actor reference anywhere. Confirmed
+live: spawning the raw class with no extra params renders identically to the placed object — the
+look is baked into construction, not assigned later by some "hire a worker" system.
+
+---
+
+## 7b. Reacting to things the GAME itself spawns
+
+`NotifyOnNewObject(classPath, callback)` (a UE4SS API) fires the **instant** an object of that
+class is constructed — no polling, no per-frame cost. Useful for catching a summon, a totem, or
+any mob the game spawns on its own that you want to react to. `LoopAsync(ms, fn)` is its periodic
+polling counterpart for cases where no such construction hook applies.
+
+**Confirmed class paths (cross-checked against a live probe):**
+```
+whistle pet   : /Game/Gameplay/Character/AI/Mob/Boar/Friend/BP_Mob_Boar_Friend.BP_Mob_Boar_Friend_C
+whistle pet L2: .../BP_Mob_Boar_FriendLvl2.BP_Mob_Boar_FriendLvl2_C
+caster totem  : /Game/Gameplay/Character/AI/Mob/SenkamatiCorrupted/Regular_Shaman_Caster/Totem/
+                BP_Mob_SenkamatiCorrupted_Reglar_Shaman_Caster_Totem.  <- the game's own typo, "Reglar"
+```
+
+**There is no separate "pet summon params" object type in this game** for at least the boar-whistle
+summon — it spawns a fixed class directly. Changing what a native summon spawns "properly" would
+need a cooked pak replacing that asset; from Lua alone, the practical approach is to anchor the
+spawned object instead (hide it, disable its collision, make it immune) and let it keep holding
+the game's own timer/cooldown/dismiss bookkeeping while your own actors do the actual work.
+
+## 8. Native spawn/scouting machinery (partially explored)
+
+- Native spawn machinery exists as `AR5SpawnPoint` (holds `UR5SpawnPointParams`),
+  `AR5AISpawnPoint`, `AR5SpawnAnchor`, `AR5POISpawner`. Gating conditions:
+  `UR5SpawnerCondition_{DayCycleTime,Weather,Preset,ComplexCondition}`;
+  `FR5AISpawnRestrictionData { DayCycleTimeInterval, AllowedWeatherPresets }`.
+- **No "distance from base" restriction appears in the native restriction struct** — if
+  something suppresses hostile spawns near a player base, that logic is Blueprint-side, not
+  exposed in the native headers.
+- Day-cycle read: no obvious single native getter. Only struct/curve types
+  (`FR5NamedDayCycleTime`, `DayCycleTimes`, `OverrideDayCycleTimes`, `DayCycleComponentCurve`)
+  exist — finding the actor/component that actually exposes current time needs a live
+  `FindAllOf`-based runtime probe.
+- If native spawn-suppression logic proves hard to read/override, the practical workaround is
+  usually simpler: spawn your own actors directly (bypassing the native spawner entirely) with
+  whatever hostility/timing you want, rather than fighting the game's own suppression rules.
+
+## 9. Cross-skeleton re-skinning: what actually determines the result
+
+Spawning a pawn on one skeleton, then applying a DIFFERENT class's composite armor/appearance
+data onto it pre-build (see §2's deferred window), generalizes across any composite-mesh-driven
+character family, not just one specific NPC type. Useful for e.g. giving an NPC with an
+undesirable native animation set a different, better-animated body while keeping its original
+outfit/look. What matters and what doesn't:
+
+- **Which mesh a component uses is independent of the component's own name/slot.** A skeletal
+  mesh's render position/deformation comes from ITS OWN skin weights against the shared skeleton
+  bones (leader-pose bound), not from which named component happens to host it. In practice this
+  means a mesh-replace rule can point ANY matched component at ANY mesh and it'll render wherever
+  that mesh's own rigging puts it — useful for borrowing an unrelated piece, but it also means a
+  wrong guess doesn't fail loudly, it just renders in a place that looks wrong.
+- **A material successfully applying is not the same as it looking right.** Some composite armor
+  materials depend on UV layout or vertex-color data baked into the SPECIFIC mesh they were
+  authored for. Assigning that same (confirmed-correct-path) material onto a borrowed,
+  differently-authored mesh does not reproduce the same visual result — confirmed live as a flat,
+  wrong color instead of the intended tone. A successful asset resolve only proves the asset
+  exists, not that it'll look right in a new context.
+- **This game's SHIPPED human body meshes have no nude/undressed variant, anywhere** — true of the
+  base game's own assets specifically, not a hard engine wall (see §11 below for a third-party
+  content-replacer pak later found to supply gap-free geometry for exactly this zone). Confirmed
+  by extracting every readable string from every pak file (see the scanning technique below) and
+  searching for "Nude"/"Naked"/"Undress" — zero real hits for any human body. These bodies are
+  modeled assuming a garment ALWAYS covers the pelvis region; there is no fallback skin geometry
+  under a stripped-away garment in the original asset. A garment piece designed with gaps (meant
+  to show skin through it) looks correct only on the specific body it was authored for, and shows
+  a literal hole straight through to the world on a different skeleton/body. The fix used here:
+  replace it with a solid garment mesh instead of a fringe/gap design (see also §11's note on
+  mesh-fit assumptions when a body mesh is later swapped).
+- **Pak files ARE partially string-scannable without a real UE unpacking tool.** `.utoc`/`.pak`
+  containers are compressed/hashed IoStore data, not plaintext (a top-level `global.utoc` yields
+  effectively nothing when scanned) — but some pak chunks embed thousands of readable `.uasset`
+  filename fragments as leftover/uncompressed string-table data. A plain scan for printable ASCII
+  runs of 5+ characters (e.g. Python's `re.findall(rb'[\x20-\x7e]{5,}', open(path,'rb').read())`)
+  over each `.utoc` file surfaces real, confirmable asset filenames (tens of thousands of unique
+  strings across this game's pak set). This is a cheap, read-only way to confirm an asset's exact
+  path/naming pattern (e.g. finding a male equivalent of a known female asset by name pattern)
+  without an in-game probe, and to rule out a whole category of asset existing at all, without
+  guessing paths one at a time.
+- **A "doesn't exist" conclusion may just be an incomplete survey.** A walking, non-unique female
+  NPC class was later found to exist after an earlier session concluded "no walking women exist
+  in this game" — that earlier conclusion was actually about a few specific classes already
+  tried (a unique hireable employee, a unique quest NPC, a male-locked procedural citizen), not
+  an exhaustive survey of the whole game. If a similar "doesn't exist" wall gets hit again, check
+  whether it was a survey of the whole game or just of what was already tried, before treating it
+  as settled.
+- **Silencing an NPC's voice lines**: the plain engine `/Script/Engine.AudioComponent` (property
+  name `AudioVoice` on at least one NPC family) drives idle/bark dialogue. It's a DIFFERENT class
+  from any game-custom sound components that might sit on the same pawn (footstep/cosmetic/
+  interruptible-sound components), so destroying just the plain `AudioComponent` class silences
+  voice lines without touching footsteps or other cosmetic sound.
+- **Finding a compatible sibling base from a class dump alone, without a live probe first.** When a
+  second interchangeable base pawn is needed, compare declared PARENT classes in a full object/class
+  dump before ever spawning a candidate: two classes sharing the identical immediate-parent address
+  are proven architectural siblings (same skeleton/AI/component shape) purely from the static class
+  graph. This only proves shape, not instance data (sex, starting archetype, which mesh actually
+  loads by default) — that still needs a real spawn or an in-world instance to confirm — but it's a
+  genuinely useful first filter: a class sharing a proven base's exact parent is a much safer next
+  guess than an unrelated class that merely lives in the same rough folder.
+
+### 9c. Mechanically discovering EVERY asset of a kind: a folder-shape assumption is never provably exhaustive
+A mechanical scan for "every asset of a given kind" assumed they all lived under a couple of known
+folder prefixes (confirmed by a handful of hand-probed items landing in exactly those trees) and
+built a roster from grepping an object dump for the matching asset type under just those paths.
+Revisiting it later with a DIFFERENT search strategy — grepping the whole dump for a FILENAME
+pattern instead of trusting the folder shape — immediately found real items the folder-based scan
+had structurally no way to catch: one asset that sits one folder deeper than its siblings and skips
+a folder segment every other sibling has (still passes the filename test), and a whole additional
+asset prefix the original folder-based search had no reason to ever look at. **Lesson: a
+folder-shape assumption that explained every item found so far is not proof the assumption is
+exhaustive** — it only proves it fit whatever you already found by hand. A filename/naming-
+CONVENTION grep across the entire dump (not scoped to assumed folders) is a meaningfully different,
+complementary search that catches structural outliers a path-based scan categorically cannot, and
+is worth re-running whenever "did we get everything" matters, not just once at the start.
+
+Separately: an item that's real, confirmed to exist in the game, and even visible in a player's
+inventory can still be COMPLETELY ABSENT from an object dump. A dropped-item actor class typically
+only gets its real mesh populated at the moment something is actually dropped/discarded as a
+physical actor in the world — an item still sitting in an unopened container's own inventory list,
+or merely held in the player's inventory, is not a spawned actor at all, so nothing forces its mesh
+to load into memory, so it can never appear in a full-object-dump snapshot taken at that moment.
+Two practical consequences: (1) a single object-dump snapshot systematically UNDER-counts relative
+to "everything that could exist" — it can only ever reflect what's been rendered at least once
+before the dump was taken; re-running the dump after more exploration reliably finds MORE, even
+against the exact same folder prefixes already scanned. (2) For confirming ONE specific known
+item's exact asset path on demand (rather than a full sweep), reading a real live instance's mesh
+component directly (a live probe, not a dump grep) works regardless of whether that asset happened
+to be loaded when the last full dump ran — the two techniques are complementary, not
+interchangeable: dump-grep for a broad sweep, live probe for confirming one specific item you can
+currently see.
+
+---
+
+## 10. Finding which "world" (save) is currently loaded
+
+Windrose supports multiple named-save "worlds," selectable from a world-list menu (each shown
+with a GUID-like ID in that menu's own tooltip). If your mod needs to know which world is
+currently loaded — e.g. to keep separate per-world save data instead of one shared file — here's
+what actually works:
+
+- **The identifier**: `World.GameState.islandId.ID` — an `R5BLRecordId` struct's `ID` field
+  (an `FString`). Confirmed live: this value is byte-identical to the ID shown in the
+  world-select screen's own tooltip for that save.
+- **It is EMPTY until the world is genuinely live.** Reading it straight off
+  `RegisterInitGameStatePostHook` returns `""` every time — that hook also fires for menu/lobby/
+  transition maps, and even for the real destination map, GameState exists before save data has
+  actually streamed into it (`GameState.ReplicatedWorldTimeSecondsDouble` is still `0.0` at that
+  point). It only reads back correctly once the world is confirmed truly live — i.e. after the
+  same pawn-exists-and-moved wait described in §4. Don't add a second, earlier read path for
+  this; hook it to whatever "world is live" signal you're already using for restore timing.
+- **Reading a struct-VALUE property (not a UObject reference) needs one extra layer.** Indexing
+  a struct-typed property (e.g. `gameState["islandId"]`) returns a struct wrapper, not the
+  instance data directly — calling `:GetFullName()` on it (the usual move for a UObject property)
+  returns the STRUCT'S OWN TYPE name (e.g. `"ScriptStruct /Script/R5BLCommon.R5BLRecordId"`), not
+  anything useful. To read its actual fields: resolve the struct's own `UScriptStruct` via
+  `StaticFindObject(<the struct's script path>)`, then `:ForEachProperty(...)` over THAT (the
+  same call class definitions support), reading each field back off the struct instance by
+  ordinary bracket-indexing (`structVal[fieldName]`).
+- **FString-typed fields need `:ToString()`, not `:GetFullName()` or bare `tostring()`.**
+  `tostring()` on an FString userdata prints its raw pointer (e.g. `"FString: 0000021E..."`), not
+  the text it holds. `:GetFullName()` fails outright (it's not a UObject). A fallback chain that
+  actually works for an arbitrary userdata property value: try `:GetFullName()` first (covers
+  UObject references), then `:ToString()` (covers FString/FName-style value wrappers), then
+  `tostring()` as a last resort.
+- **`os.rename` is available** in UE4SS's Lua environment (useful for e.g. renaming an old
+  shared save file once its data has been migrated elsewhere, so it can't be mistakenly reused
+  again later). Windows semantics apply — it fails rather than silently overwriting if the
+  destination already exists — so wrap it in `pcall` and treat failure as non-fatal.
+- **The struct-drilling recipe above generalizes to ANY unfamiliar native struct, without needing
+  to already know its type path.** Plain dot-access ONE level further into a struct wrapper (e.g.
+  reading a nested field directly off it) is exactly the kind of read that causes an uncatchable
+  native crash. The fix each time is the same three-step recipe: (1) the TOP-LEVEL struct-valued
+  property read itself is safe on its own (one dot, no further drilling yet); (2) call
+  `:GetFullName()` on THAT wrapper — normally read as "useless, just reports the struct's own
+  type" (see above), but that's exactly what hands you the type path to feed `StaticFindObject`
+  WITHOUT having to already know or guess it (strip the leading `"ScriptStruct "` off the returned
+  string); (3) `:ForEachProperty()` over the resolved struct definition, bracket-indexing the
+  ORIGINAL wrapper instance (never the struct definition) for each field name found. This turns "I
+  don't know this struct's shape" from a blocking problem into a fully mechanical, crash-safe
+  discovery — no need to find the struct's definition in an object dump first.
+
+---
+
+## 11. Content-replacer paks (asset overrides): what's possible from Lua and what isn't
+
+Distinct from everything above — this is about REPLACING a shipped asset (mesh/texture) at the
+content level via a `.pak`/`.ucas`/`.utoc` trio, not about spawning/scripting behavior.
+
+- **A `_P`-suffixed override pak replaces content at the SAME virtual asset path, for EVERY
+  reader, with no per-caller escape hatch.** This is standard UE IoStore patch-chunk behavior:
+  once mounted, any code that resolves that path — the game's own systems, or your own script's
+  `LoadAsset` call — gets the override version. The original (vanilla) version becomes
+  unreachable through that path for as long as the override is mounted. There is no way to "opt
+  out" for one specific caller/situation while the override stays mounted; scoping an override to
+  just one case requires giving the replacement a genuinely DIFFERENT asset path (which needs
+  re-cooking — see below), not a scripting trick.
+- **Content mods live in their own subfolder under `R5/Content/Paks/<ModName>/`**, containing the
+  matching `.pak`/`.ucas`/`.utoc` trio (all three needed together — `.ucas`/`.utoc` is the IoStore
+  container, `.pak` alone is a small index/header). The engine auto-discovers pak folders
+  recursively; no manifest file is needed to register one.
+- **Pak mounting only happens at game STARTUP — it is NOT hot-reloadable**, unlike Lua script
+  changes (which can pick up edits via a console-command-triggered mod restart with no world/menu
+  round trip in this game). Adding or removing a content pak needs a full game relaunch to take
+  effect. There is also no accessible log of pak-mount events in this game — the main UE4SS log
+  doesn't cover engine-level content mounting, and no client-side log path with mount-relevant
+  detail was found. Confirming a content override actually took is a VISUAL check in-game, not a
+  log-grep.
+- **Two benign UE4SS log patterns, easy to mistake for real errors:**
+  - Lines that look like a struct field named `...IsError`/`...IsCriticalError` printed with a
+    numeric value can be UE4SS's own SDK struct-OFFSET dump (byte offsets within a struct, printed
+    once during startup/hook generation) rather than an actual runtime error report — check the
+    surrounding context (a long run of `ClassName::FieldName = 0xNN` lines) before treating it as
+    a crash signal.
+  - A generic "a custom console command handler must return true or false"-style message can fire
+    as a side effect of invoking a registered console command, unrelated to whether that command
+    actually succeeded — confirmed on two unrelated custom commands in this game.
+- **Extracting/inspecting what's actually inside a cooked pak needs a real tool (e.g. FModel), not
+  a hex/string scan** — the plaintext-fragment scanning technique in §9 only surfaces asset NAMES,
+  not usable content. A tool built for IoStore/UAsset formats can export a texture as a plain
+  image, or a mesh as a raw asset file.
+- **Whether an extracted asset file is usable depends entirely on WHICH export mode produced it —
+  this is not automatic, and easy to get wrong.** An extraction tool like FModel offers several
+  distinct export paths: format-CONVERTED exports (texture → viewer image format, mesh → a
+  generic 3D interchange format, etc.) are for viewing/reference only, never game-loadable. A
+  RAW/"save package" export instead preserves the actual COOKED bytes byte-for-byte, exactly as
+  shipped inside the pak — genuinely the same format the game itself reads. A dedicated pak tool
+  used purely to unpack an archive (rather than view/convert its contents) does the equivalent of
+  the raw path by design — there's no ambiguity there, since unpacking can't convert format. A
+  cooked package is also usually split across companion files (metadata file + a separate data
+  file, plus a third for texture/mesh bulk data) — ALL of them need to travel together to the same
+  destination with matching names; a lone metadata file with no data-file companion may be an
+  incomplete extraction even from a correctly-raw export.
+- **Loose files (dropped directly into the content folder, no pak) MAY OR MAY NOT be honored —
+  this is a per-build packaging setting, not something true of UE games in general.** Most
+  commercial Shipping builds disable loose-file fallback; some don't. Confirming a shipped
+  commercial build supports it (or doesn't) requires a live test, not an assumption either way —
+  and the pak-auto-discovery pitfall directly below can easily contaminate that exact test.
+- **Disabling a pak means moving it FULLY OUTSIDE the paks directory tree — renaming or relocating
+  it to a sibling subfolder WITHIN that tree does not disable it.** Pak discovery is RECURSIVE
+  (already noted above) — a folder named "disabled" or "backup" still sitting anywhere under the
+  paks directory is still auto-mounted regardless of its name. This invalidated an entire A/B test
+  before the bug was caught: a body-mesh replacement that appeared to work was actually still
+  being rendered by the "disabled" original pak the whole time, not the new content being tested.
+  Move a pak-under-test's backup to a folder genuinely outside the content directory entirely (or
+  at minimum outside the paks subtree) to get a clean disable — never trust a same-directory
+  rename for this.
+- **A mesh that attaches and animates correctly is not the same as one that FITS visually.** Two
+  meshes sharing a skeleton (so a clothing/garment piece skins and animates correctly on a body)
+  can still visibly clip or show a seam/gap where they meet if the BODY mesh's geometry changes
+  shape at that seam — a garment piece is typically fitted with clearance for one specific body
+  shape, not skeleton-compatibility alone. Confirmed live: a garment mesh that correctly covered a
+  gap on the original body visibly clipped/gapped at the same seam once the body mesh underneath
+  was replaced with a different (though skeleton-compatible) one. Swapping a body mesh can require
+  re-checking every garment piece that sits close against it, not just confirming the new body
+  mesh itself looks right in isolation.
+- **A single-file asset swap (no data-file companion) was NOT sufficient to fix a body-mesh
+  clipping problem, once the pak-auto-discovery bug above was corrected for a genuinely clean
+  test.** Result was indistinguishable from not replacing the mesh at all. Left genuinely
+  unresolved which factor mattered — missing data/bulk-data companion files, loose-file loading
+  not being supported by this build at all, or the source meshes themselves not actually differing
+  in the way that was hoped. Recorded as a negative result, not a proof that loose-file
+  replacement can never work — a properly complete cooked-package export (all companion files
+  present) would be the next thing to try before concluding the mechanism itself is the blocker.
+- **Diagnosing "a pak won't open in an extraction/viewer tool" — rule out causes in order, don't
+  guess.** (1) Check the header is structurally valid first: correct IoStore magic (16 bytes,
+  `-==--==--==--==-`) and a header size matching the known TOC header struct size for the engine
+  version — if that's wrong, the file itself is genuinely corrupt/truncated. (2) Check whether
+  it's actually encrypted (the tool will usually say so directly) before assuming encryption is
+  the blocker — guessing wrong here and not correcting against real tool output wastes a
+  detour. (3) A "global container not found" error means the tool needs the base game's shared
+  global IoStore container files (which hold the name/script-object map every individual pak's
+  table-of-contents references) present in the SAME directory as the pak being scanned; point the
+  tool at the game's real content-paks folder directly, not a standalone copy of just one pak.
+  **Pointing an extraction tool at the whole game install root instead of the specific content-
+  paks folder can walk it into a mod-loading framework's OWN separate pak folder** (if the game
+  uses a Lua/script modding framework with its own hot-reloadable content-pak system, that lives
+  in a totally separate folder from the base game's real asset paks) and cause a confusing failure
+  trying to resolve a global container against pak files found THERE instead of the real one — not
+  actually a sign anything is broken, just a wrong scan root. (4) A parse failure deep inside
+  directory-index deserialization (e.g. "string not null terminated"), especially one that fails
+  on very nearly the LAST entry in an otherwise-successful read, is a real signature worth
+  recognizing: **a common, simple anti-extraction technique is to deliberately corrupt just the
+  human-readable directory index** (which generic browsing tools need to build a file tree) while
+  leaving the actual chunk data intact, since the game's own loader resolves assets by chunk ID at
+  runtime and may never need that index to be valid at all. Failing almost at the very end of an
+  otherwise-clean parse is a meaningfully different signal than failing immediately — treat it as
+  likely-intentional, not likely-corrupt, and don't expect a different tool or a re-download to
+  fix it.
+
+---
+
+## 12. Compiled C++ UE4SS mods: rendering an interactive overlay safely
+
+Some Windrose mods (visible in the ecosystem: a mod-list/config manager, an in-game text-sign
+editor) prove real, fully interactive, mouse/keyboard-capable overlay windows ARE achievable —
+UE4SS supports compiled C++ mods (a `.dll`), not just Lua. This section is what it actually takes
+to get an interactive window rendering without crashing the game.
+
+### 12a. A relative path resolves against the GAME's working directory, in C++ too
+Same trap as script-side file I/O (nothing about it is Lua-specific): a bare relative
+path/filename opened from a C++ mod's DLL resolves against the game process's actual working
+directory (`<GameRoot>/Binaries/Win64/`), NOT the mod's own folder, NOT the calling DLL's
+location. Confirmed live — a first attempt at a mod-to-mod file bridge landed its output file one
+level too high before this was caught. Prefix every path explicitly from the known process root
+(e.g. `"ue4ss/Mods/<YourModName>/..."`) rather than trusting a bare filename, on both sides of
+any cross-mod or cross-language file bridge.
+
+### 12b. Hooking a DXGI/D3D vtable function: an inline detour, never a raw vtable swap
+A raw vtable-pointer swap hook (directly overwriting the function pointer in the vtable) on
+`IDXGISwapChain::Present` causes **infinite recursion with Steam's own overlay hook**
+(`gameoverlayrenderer64.dll`) — confirmed via a live debugger catch showing a stack overflow
+inside Steam's own overlay hook function. Steam's overlay ALSO hooks `Present`, and the two
+raw-swap approaches step on each other. An inline/trampoline-style detour (e.g. PolyHook2's
+`x64Detour`) composes correctly with other hookers (Steam's overlay included) and does not have
+this problem. If a DXGI/D3D function needs hooking at all, use a trampoline detour, not a vtable
+swap.
+
+### 12c. Capture the REAL command queue by hooking swapchain creation, not by guessing
+For D3D12 specifically, the officially-documented way to get the exact command-queue pointer
+paired with a given swapchain is to hook swapchain creation itself
+(`IDXGIFactory2::CreateSwapChainForHwnd`) — for D3D12, its device parameter IS the command queue
+pointer, by the API's own contract. A heuristic guess instead ("the first DIRECT-type queue seen
+via command-list execution") captured the WRONG queue and caused an unrecoverable hang (the game
+had to be force-closed — not a clean crash, a deadlock). Don't guess; hook the creation call.
+Separately: any fence/event wait tied to frame presentation should use a bounded timeout, never
+an infinite wait — a wrong or stale queue/fence pairing turns an infinite wait into a permanent
+hang instead of a recoverable skipped frame.
+
+### 12d. DLSS/FSR frame-generation wrappers can break a naive swapchain-Present overlay
+A game running NVIDIA DLSS Frame Generation (Streamline) or AMD FSR/frame interpolation wraps the
+real swapchain in its own proxy. A hook that writes overlay draw data directly onto the raw back
+buffer via the captured Present/command-queue — even with the correct queue (12c) and a safe hook
+style (12b) — can still produce genuine GPU device removal, confirmed via live debugging across
+multiple iterations, including one run where disabling the frame-gen SDK's swapchain-provider
+wrapping changed the crash's failure signature but did not eliminate it. The frame-gen SDK in
+question does document its own official overlay-integration point meant to coexist with frame
+generation, but it isn't always bundled in a given game and can require real SDK integration
+work to use. **Practical takeaway: don't build a raw Present/back-buffer overlay for a game
+running DLSS-G or FSR frame interpolation without first confirming the engine's own supported
+overlay-injection path — assume a naive approach will eventually device-remove.**
+
+### 12e. A standalone window on its own thread is a safe, working alternative to hooking Present
+Instead of drawing into the game's own swapchain, create an entirely separate OS window with its
+own D3D11 device/swapchain and its own independent ImGui context — running on its own thread,
+with its own Win32 message pump. This has zero interaction with the game's own D3D12 rendering
+pipeline or any frame-gen swapchain wrapping, since it never touches either. Confirmed safe and
+fully interactive via live testing — no crashes, real mouse/keyboard input, movable/resizable.
+Tradeoff: it's a genuinely separate window (alt-tab target, own taskbar entry), not an in-game
+overlay drawn over the 3D view — for a control-panel-style tool (as opposed to a HUD/reticle-style
+overlay) this is a fully acceptable, much lower-risk trade. Closing the window should hide it
+rather than destroy it, if the intent is a toggleable panel rather than a one-shot dialog.
+
+### 12g. A global ImGui context pointer means two ImGui threads in one DLL is not safe by default
+Adding a SECOND standalone window (own thread, own D3D11 device, own independent ImGui context —
+the pattern §12e calls "confirmed safe") does **not** automatically inherit that safety just
+because the first one worked. Dear ImGui's current-context pointer is a single **global**
+variable, not thread-local, shared across the whole process no matter how many independent
+contexts exist. Two threads each calling into ImGui against their OWN context, concurrently, race
+on that shared global — whichever context isn't "current" at the moment gets corrupted. Confirmed
+live: **100% reproducible crash on every single launch** once a second window/thread/context was
+added (unlike most races in this list, which are intermittent), with visible secondary symptoms
+(UI state in the FIRST, unrelated window randomly misbehaving) proving genuine cross-context state
+corruption, not just an isolated clean crash.
+**The fix is architectural, not a bigger mutex** (see §12i for why a mutex alone wasn't enough
+anyway): don't run two ImGui contexts/threads in one process if it can be avoided. Collapse to a
+single window/thread/context and present what would have been separate windows as tabs of the ONE
+window instead. For a mod's own auxiliary tool UI (as opposed to something that genuinely needs to
+be two independent OS windows), this is strictly safer and sidesteps the whole class of races
+rather than chasing each instance individually.
+
+### 12h. Minidump analysis without a full debugger install
+A full crash-dump debugger is normally a large separate install, but a Microsoft Store install of
+one (e.g. WinDbg) often has its actual command-line debugger executable bundled inside its own
+package folder (under `C:\Program Files\WindowsApps\...`) — which is ACL-locked, so even reading/
+copying that exe out is blocked for a process launched outside the Store app's own execution
+context.
+**Workaround**: locate the package folder, copy the debugger exe plus its companion DLLs into a
+writable scratch folder, and run it from there. Point it at BOTH the crash dump and the LOCAL
+debug symbols your own mod's build already produces alongside its binary (an ordinary compiler
+debug-info build), so symbols resolve for your own frames, not just system DLLs. A command-line
+debugger's typical crash-triage sequence: switch to the actual exception context record first
+(without this you're looking at the debugger's own entry state, not the crash site), print a
+reasonably deep backtrace with arguments, then quit. This turns "it crashes every launch" into an
+exact function/line within minutes, instead of guessing from symptoms alone.
+
+### 12i. A mutex around one race can hide a second, independent race behind it
+After fixing a cross-thread ImGui race (§12g) with a mutex serializing UI calls between two
+windows' threads, the crash appeared to be gone — then came back under the same "every launch"
+reproducibility, but with a **completely different root cause**: a null D3D constant buffer,
+traced via a second minidump (§12h) to the two windows' D3D device-creation calls racing each
+other at startup (both windows created near-simultaneously on mod load, both independently
+creating their own device/swapchain with no ordering guarantee between them).
+**Lesson**: when a fix for one identified race doesn't fully resolve an "every time" crash, don't
+assume the fix itself was wrong before checking whether a SECOND, independent race shares the same
+trigger window (here: "two things happening near-simultaneously at mod startup") and was simply
+masked by whichever one hit first. A fresh minidump with a genuinely different call stack (device
+creation vs. UI-library internals) is what actually proved these were two separate bugs, not one
+incompletely-fixed one. Both were ultimately made moot by the SAME architectural fix as §12g
+(collapse to one window/thread) rather than patched individually — worth checking whether an
+architectural simplification kills a whole CLASS of races before chasing each one to its own
+targeted fix.
+
+### 12j. A native key-bind hook only fires while the GAME window has OS focus — stealing focus programmatically can break a "press again to undo" key
+A key bound through the engine's own key-bind registration API is a GAME-input hook: it only
+fires while the actual game window holds OS keyboard focus, not system-wide. This matters the
+moment a mod also owns its OWN separate window (e.g. a companion tool UI, §12e/12g) that can end
+up holding OS focus instead.
+Concretely: a toggle key meant to open AND close an auxiliary window (open on press while playing,
+close on a SECOND press while playing) broke specifically for the "close" direction whenever the
+window's own open-path forced itself into OS foreground focus — once the tool window had focus,
+the GAME window no longer did, so the toggle key's second press never reached the native key-bind
+hook at all (the OS routed it to the tool window instead, which wasn't listening for it as a
+hotkey).
+**Fix pattern**: don't force foreground focus on an auxiliary window's OPEN path if a game-side
+keybind needs to be able to close it again later while the game still has OS focus — closing must
+be reachable without the user manually re-focusing the game window first. If focus-stealing on
+open is still wanted for convenience (so a click lands in the tool immediately), pair it with a
+LOCAL input check inside the tool's own render/input loop, so the tool can ALSO close itself while
+it has focus — two independent paths to the same close action: one for "still playing" (the
+native keybind, fires while the game has focus) and one for "focused on the tool" (the local key
+poll, fires while the tool has focus).
+**Separately confirmed: forcing OS foreground focus (or any direct low-level window-focus call) is
+not reachable from UE4SS Lua at all** — no exposed binding exists in UE4SS's own Lua API for it.
+Any "make my own window take focus" behavior triggered from a script has to cross a file-based
+bridge to a companion compiled mod that can call the real OS API itself — it cannot be done
+script-side directly, at all.
+
+### 12k. Not every engine-exposed property is reachable from script reflection, even when it visibly exists on the class
+Two related viewport-client properties that would let a script control OS cursor confinement to
+the game window (matching what several native menus already do) resolve through UE4SS's Lua
+property-access layer to a technically-non-nil object wrapper — but one that reports itself
+invalid on EVERY access, confirmed via purpose-built diagnostic instrumentation (read the
+property, check the result's own validity/type, log both). This is a genuinely different failure
+mode from "property doesn't exist" (which returns a script-side nil) or "property exists and
+works" — it's a placeholder object that LOOKS reachable but isn't functionally usable.
+Two heavier alternatives exist but weren't pursued: (1) the modding framework's own hardcoded
+byte-offset accessor system for specific known-problematic properties, which needs its own
+SDK-generation tooling run against this specific game build first (native-code-only, no script
+equivalent); (2) constructing the engine's real input-mode struct directly and passing it to the
+matching native setter — but that struct is polymorphic (has a vtable), and a script reflection
+layer typically only knows how to marshal plain-old-data structs by value; constructing one from a
+script risks the same "uncatchable native crash" class documented in §3 for any mismatched-ABI
+native call.
+**When a property looks present but every read comes back invalid/unusable, stop retrying
+different script-side access patterns** — that's a signal the property genuinely isn't exposed at
+this layer. The fix, if there is one in scope, lives in native code, not in a cleverer script read.
+
+### 12l. Toolchain / project shape for a compiled UE4SS C++ mod
+- UE4SS's own C++ mod SDK (RE-UE4SS) is typically added as a git submodule; it itself submodules
+  a private, engine-source-gated header-stub repo that 404s until your GitHub account is linked
+  to an Epic Games account with Unreal Engine source access — a manual, one-time, per-developer
+  step with no code-side workaround.
+- Build configurations are NOT the CMake defaults (`Debug`/`Release`) — RE-UE4SS defines its own
+  custom named configs (pattern: `{Game|CasePreserving|LessEqual421}__{Debug|Dev|Shipping|Test}__Win64`).
+  Passing a standard config name to the build tool fails with a "doesn't contain Configuration and
+  Platform combination" error; always pass one of the real custom names (e.g.
+  `Game__Shipping__Win64`).
+- A mod project is a small subclass of UE4SS's own mod base class plus two exported C functions
+  (mod start/uninstall), same shape regardless of what the mod actually renders. Deploys as
+  `.../ue4ss/Mods/<ModName>/dlls/main.dll` alongside an `enabled.txt`, the same folder convention
+  every UE4SS mod (Lua or C++) uses.
+
+### 12m. A toggle reachable from BOTH the game and a companion C++ window needs ONE owner, not two
+A feature needed to be triggerable from an in-game keybind AND a button/key inside a separate
+compiled-mod window, with both paths meaning the same logical state (e.g. "which of several
+options is currently selected"). The tempting shortcut — give the C++ window its own local
+variable, toggled directly by its own keypress handler — silently produces TWO independent copies
+of what's supposed to be one piece of state: the in-game key changes the script-side copy, the
+window's own key changes the C++-local copy, and nothing keeps them in sync; whichever one the
+player checks last is "wrong" from the other's perspective. **Fix**: let the SCRIPT side own the
+state as the single source of truth, exactly like every other piece of live game state a Lua/C++
+bridge already exposes (a target lock, a restore-in-progress flag, etc.). Both input paths just
+SEND A REQUEST to change it — the in-game key calls the mutator function directly; the C++
+window's own key/button appends a one-shot request through the same file-based bridge every other
+GUI action already uses. Neither input path ever mutates its own local copy of the state — the
+C++ side only ever READS the current value back via the existing status-file poll, the same
+mechanism it already uses for other shared state. This guarantees the two input paths can never
+disagree, at the cost of nothing extra: the status-poll and request-bridge machinery were already
+there for other shared state, so a new toggle is just one more field on each, not a new
+synchronization mechanism.
