@@ -293,6 +293,89 @@ mismatch (declared local, but the runtime calls it a nil global) is the tell; gr
 both the call site and the actual `local function`/`local x =` declaration before assuming the
 called function itself is broken or missing.
 
+### 3l. INVOKING an unfamiliar UFunction is real crash risk, even when it looks simple
+Two different native calls hard-crashed the game the first time each was actually invoked, in the
+same session, both with **zero pcall-catchable warning**: a struct/enum-heavy spawn-and-attach
+library call (many arguments, several of them structs/enums), and — separately — a trivially
+simple single-`FName`-argument QUERY function on a component, no structs, no enums, nothing that
+looked risky on paper. It crashed on the very first candidate name tried. Both are genuine,
+correctly-reflected UFUNCTIONs with obviously-correct argument shapes. Neither "this call has a lot
+of arguments" nor "this is a mutating call" predicted the second crash. **Reflection is safe;
+invocation is not, and structural complexity is not a reliable predictor of which calls will
+crash.** Reading a class's declared properties/functions, or a specific UFunction's own parameter
+list, has been 100% safe every time — it never actually calls anything. The moment you cross from
+reflecting on a function to invoking it, treat ANY function you haven't already called successfully
+before as a real crash risk, save first (or accept the game may need a hard restart), and don't let
+"it's just one float/name argument" talk you out of that caution.
+
+### 3m. A UFunction's OWN return value can be meaningless — check the CALL's success, not the function's return
+Some engine functions communicate their result only through OUT-PARAMETERS (pre-allocated empty
+tables passed in, populated by the call) and have no meaningful return value of their own — a
+component-bounds query is a good example. Code that does `local ok = obj:SomeQuery(arg, outTable)`
+and then checks `if ok and outTable.X...` can silently never enter that branch, for anyone, on any
+object, for the entire time it ships — `ok` is always nil/falsy, because there was nothing there to
+assign. The correct pattern: wrap the call in a `pcall` and use THAT call's own true/false as the
+success flag, then read the out-parameter table afterward. **Any function whose real output lives
+in out-params, not its return value, needs this pattern; capturing the call's own return directly
+and checking that for truthiness will silently do nothing, forever, with no error to notice.**
+
+### 3n. A line-trace's channel argument is a DIFFERENT enum than a component's collision-response API
+A line-trace function's channel parameter is typically a Blueprint-only "trace type query" enum
+(built from Project Settings → Collision → Trace Channels), NOT the same raw collision-channel enum
+a component's own collision-response API takes — they are two separate numbering systems that
+happen to overlap in low integers, which is exactly what makes a wrong guess look plausible. By
+Unreal's own default project settings (confirmed live in this game), trace-type-query index 0
+("Visibility") maps to raw collision-channel index **3**, not 0. Several progressively-more-specific
+wrong guesses can all fail to change behavior AT ALL before landing on the real fix — and the real
+fix may ALSO be gated behind a completely separate bug (e.g. a wrapper-object unwrap step being
+skipped, see §2b) silently no-op'ing every collision-response call regardless of which channel
+number was used. **Lesson inside the lesson**: when several independently-reasoned guesses all
+produce ZERO observable change (not "wrong value," but "nothing happened"), suspect the write
+itself is silently no-op'ing before spending more guesses on the value.
+
+### 3o. Comparing two independently-fetched object handles with `==` is unreliable, even for the identical underlying object
+Script-side handles to engine objects are wrapper objects, not the raw pointer — two SEPARATE calls
+that both resolve to the SAME underlying engine object (e.g. a raycast hit's owner vs. a tracked
+list's own stored reference) can still read as unequal under plain equality, confirmed live more
+than once. Never compare "is this the same actor" via two independently-fetched handles; either (a)
+always store and re-use the SAME single fetched handle for later comparison (safe — same-handle
+identity, not cross-fetch), or (b) compare a derived STABLE key instead (the actor's own instance
+path string). This has broken both a "is this the actor I'm already tracking" check (read false on
+every tick despite visibly aiming at the same object the whole time) and an "is this one of mine"
+list lookup, in two unrelated features.
+
+### 3p. A property write can succeed with zero error yet have no lasting (or any) visible effect, if a native settings/params system re-asserts it
+Distinct from §3i (a Static-mobility component silently not re-rendering) — this is a write that
+genuinely takes effect internally, confirmed because a separate read-back shows it changed, but the
+RENDERED result either never changes at all, or eases back to some other value within about a
+second. Symptom of a native "desired value" system running downstream of the property being written
+(a camera modifier, a settings-driven params object, a per-frame recalculation) that keeps
+overwriting the write on its own schedule. Fighting it by re-writing every poll tick can make it
+WORSE (visible pulsing, if the poll rate doesn't match the native system's own tick rate) rather
+than better. The real fix is finding and disabling whatever REFERENCES the params/settings object
+first — a camera component with a "use custom settings" boolean and a settings/params object field
+is a common shape for this: clearing the settings-object reference and disabling the boolean BEFORE
+writing the property directly stopped it from being blended back, where writing the property alone
+(however many times) never stuck. **When a plain property write reports success but the screen
+doesn't agree, don't conclude the property is wrong — look for a sibling boolean/object field that
+opts the component OUT of whatever system keeps re-asserting it.** A reference mod for the same
+game (even an old, otherwise-outdated version) can be the fastest way to find that specific detach
+mechanism, faster than reflecting blind.
+
+### 3q. How argument counting actually works for a raw UFunction call with a return value
+Calling an arbitrary UFunction directly (not a convenience wrapper) throws an "expected N
+parameters, received M" error if the count is off — but N is NOT simply "however many parameters
+the function reflects." A function's total declared property count INCLUDES the return value as one
+of those properties when it has one — but the number of arguments you're actually expected to
+SUPPLY is that total **minus one** in that case, since the return value isn't something you pass
+in. Concretely: a function reflecting 11 total properties (10 real input parameters + 1 return
+value) expects exactly **10** supplied arguments, not 11 and not 9. Getting the return-adjustment
+wrong in either direction produces the exact same generic error message regardless of which count
+was actually wrong, so trust the formula over trial-and-error — and note a genuine return value does
+NOT need (and can actively break the count if you add) an extra placeholder out-parameter table the
+way a true out-parameter would (see §3m for that different case) — the plain script-side return of
+the call already carries it.
+
 ---
 
 ## 4. Persisting and restoring actor state across a world load
