@@ -1155,3 +1155,82 @@ to them. Before assigning ANY new keybind, native or scripted: grep every instal
 config/settings files for hardcoded key names first, not just the mod you're actively building —
 a real collision reads identically to a crash in your own new code, and the two are easy to
 conflate without checking.
+
+### 12s. A native post-hook scoped to one instance can still fire from unrelated causes — the mechanism isn't the risk, the CHOICE of bound function is
+Click-detection (bind a button's click delegate to a harmless inherited function, hook that
+function scoped to one instance) worked perfectly with exactly one bound widget. The moment a
+SECOND widget was bound the same way, a single real click on one widget fired the hooks of ALL
+bound widgets — every one registered so far, in registration order, within a couple milliseconds
+of each other. The mod loader's own documentation for the instance-scoped hook API states it fires
+only when the instance pointer matches, and there's no reason to doubt that claim: the actual
+cause was that the bound function itself (a widget lifecycle function, chosen because it's
+inherited, harmless, and already used routinely by the widget system) is called by the engine's
+own layout-invalidation pass on MANY widgets whenever anything in the tree re-layouts — which a
+click's own broadcast triggers, cascading a legitimate, correctly-instance-scoped call to every
+OTHER widget in the same frame. **The hook mechanism was never the bug; a "harmless,
+already-called" function is, almost by definition, not an exclusive signal for the one event you
+actually care about**, and that only becomes visible once more than one instance is bound to it.
+
+### 12t. A raw OS-level input poll can be completely blind to mouse buttons in a specific game process while keyboard keys work perfectly through the identical call — and a framework's OWN input pipeline can silently share that same blind spot
+Needed a fallback click-detection signal (poll-based, not hook-based) and reached for the
+standard Win32 "is this key/button currently down" API on a rising edge — the mod loader's own
+async input source uses exactly this call for its keyboard bindings (confirmed by reading its
+source, not assumed). Live: logged EVERY transition of that bit, not just a rising edge, across
+multiple sessions with the mouse cursor genuinely released — zero transitions, ever, despite real
+clicks happening. The SAME API for a keyboard key (already in production use in the same mod)
+worked reliably the whole time. Tried routing through the mod loader's own key-registration API
+instead, using its built-in left-mouse-button key constant, on the theory that its underlying
+input source might use a different/more privileged path — ALSO silent, because (confirmed by
+reading its source) that system polls the same raw API for every subscribed key, mouse buttons
+included, so it's driven by the exact same primitive that already failed. **A modern game very
+plausibly captures mouse input through a raw/exclusive path (common for aiming precision) that
+never touches the legacy key-state table for mouse buttons specifically, while leaving keyboard
+state on that table untouched** — don't assume "the framework's own proven mechanism will work
+here too" without checking whether it's built on the exact primitive you already ruled out.
+
+### 12u: Never mutate or rebuild a widget tree synchronously from inside a native function hook's callback — it can hang the game, not crash it
+A click handler that immediately tore down and rebuilt several widgets (remove old rows,
+construct new ones) directly inside the hook callback described in §12s worked for a single,
+static widget, but froze the game solid — no crash log, no error, just a hang — the moment it ran
+for a widget whose own click was what triggered the rebuild (e.g. expanding a category, which
+both removes and adds widgets in the same handler). The callback runs while the engine's own
+dispatch of the ORIGINAL event (the click's own broadcast) is still on the call stack; destroying
+or reconstructing the very widget that broadcast is still actively processing is a form of
+reentrancy the engine isn't expecting, and it hangs rather than crashing cleanly — much harder to
+diagnose than a crash, since there's no stack trace or dump to read. **Fix: never touch the widget
+tree from inside a hook callback. Set a dirty flag instead, and do the actual rebuild from a
+per-frame tick function that runs outside any hook's call stack.** Cheap, and turns an
+intermittent, undiagnosable hang into a guaranteed-safe deferred operation.
+
+### 12v: A panel's own "clear all children" function can silently do nothing live, even though it resolves and returns cleanly — track what you added and remove it explicitly instead
+Rebuilding a scrollable list of dynamically-constructed rows called the panel's own generic
+"clear all children" function before repopulating it. It resolved via the mod loader's own
+function-lookup call (no error logged) and its invocation completed without incident — yet live,
+the old rows never actually disappeared; each rebuild just appended a fresh full set on top of the
+last, growing without bound. Root cause not independently pinned down (a function resolving and
+returning without error is not the same guarantee as "it did what its name says," a theme that
+recurs elsewhere in this notes file too). **Fix: track exactly which child widgets you added (a
+plain list, appended on add), and remove each one explicitly via the panel's own single-child
+"remove this widget" function before adding the new set, rather than trusting a bulk "clear
+everything" call.** Worth separately noting: the container's generic single-child add/remove
+functions (available on every panel-type widget, inherited from a common base) resolved and
+worked reliably for every panel type tried (a scroll container, vertical/horizontal stacks); only
+ONE container type needed its own more specific, type-named add function instead (a canvas-style
+panel, whose slot carries extra positioning data the generic version's default slot doesn't) —
+don't assume every panel type needs its own specifically-named function; try the generic
+base-class one first.
+
+### 12w: Combining a broad-but-reliable native signal with a cheap, independent, per-instance filter beats hunting for a "perfectly exclusive" one
+The eventual click-detection fix wasn't a fourth new mechanism — it was recognizing that the
+original hook-based approach from §12s already gave a real, reliable signal ("this specific widget
+instance's bound function was just invoked"), just not an EXCLUSIVE one for the one event that
+mattered (a genuine click, as opposed to routine engine housekeeping calling the same function).
+Rather than search for some other bound function that might be truly click-exclusive (unverifiable
+without engine source, and this notes file's own history — §12s itself — shows that kind of
+assumption fails silently), the hook's own callback was extended to independently check, at the
+exact moment it fires, whether that SAME widget instance currently reports itself as hovered by
+the mouse (an ordinary, already-reflected getter, no extra machinery). A real click's hook fire
+and a "the cursor is over this exact widget right now" check coincide; an unrelated housekeeping
+fire on some OTHER widget essentially never does. **When a real, hard-won signal exists but isn't
+specific enough on its own, look for a second cheap, independent, per-instance check to combine it
+with before abandoning the whole mechanism for something unproven.**
