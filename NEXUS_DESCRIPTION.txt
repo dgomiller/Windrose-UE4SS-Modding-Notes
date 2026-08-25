@@ -1,0 +1,52 @@
+[size=5][b]Windrose UE4SS Modding Notes[/b][/size]
+[color=#D4D4D8]Durable, engine-level facts about modding [b]Windrose[/b] (Kraken Express, UE 5.6) with [b]UE4SS[/b] — both Lua scripting and compiled C++ mods. Not a tutorial and not a wrapper library — just the hard-won, confirmed-live findings that would otherwise get rediscovered by every modder independently: what crashes, what silently no-ops, what actually works, and the exact recipe for each.
+
+Everything here was learned building real, shipping mods ([url=https://www.nexusmods.com/windrose/mods/519][b]Living Base Enhanced[/b][/url] and its C++ companion, LivingBaseSpawnMenu), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
+
+[b]GitHub:[/b] [url=https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes]github.com/dgomiller/Windrose-UE4SS-Modding-Notes[/url][/color]
+
+[size=4][b]What's in it[/b][/size]
+[color=#D4D4D8]One plain-text file, [b]Windrose_Modding_Notes.txt[/b], organized into numbered sections:
+
+[list]
+[*]1. Spawning an actor that actually works
+[*]2. The composite (appearance) system — what sticks and what doesn't
+[*]3. THE CRASH TRAPS (each cost real debugging hours)
+[*]4. Persisting and restoring actor state across a world load
+[*]5. Peace / faction mechanics
+[*]5b. Movement — this game does not use the UE navmesh
+[*]6. Development workflow that works
+[*]7. Useful class paths
+[*]7b. Reacting to things the game itself spawns
+[*]8. Native spawn/scouting machinery (partially explored)
+[*]9. Cross-skeleton re-skinning — what actually determines the result
+[*]10. Finding which "world" (save) is currently loaded
+[*]11. Content-replacer paks (asset overrides) — what's possible from Lua and what isn't
+[*]12. Compiled C++ UE4SS mods — rendering an interactive overlay safely
+[/list]
+
+Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too, because a documented dead end saves someone else the same hours: stale UObject pointers, native crashes with zero pcall-catchable trace, Mercuna navigation (not the UE navmesh), why a property write can report success and never render, DXGI/D3D hooking pitfalls, and more.
+
+Also included: [b]pakcontents.xlsx[/b] — an export of every asset name inside the game's .pak/.utoc files, one sheet per file. Useful for finding a class/asset path to spawn or reference without digging through the raw archives yourself.[/color]
+
+[size=4][b]Using it[/b][/size]
+[color=#D4D4D8]It's one file, so pick whatever fits your workflow:
+
+[list]
+[*][b]Just read it[/b] — browse the file directly on GitHub.
+[*][b]Pull it into your own project as a submodule[/b], so it updates when the repo does:
+git submodule add https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes.git external/windrose-notes
+[*][b]Clone or curl the raw file[/b] if you just want a local copy:
+curl -O https://raw.githubusercontent.com/dgomiller/Windrose-UE4SS-Modding-Notes/main/Windrose_Modding_Notes.txt
+[/list]
+
+This isn't a one-time snapshot — it gets updated whenever new findings come out of active mod development. Pull/re-fetch periodically (or watch the GitHub repo) if you want the latest.[/color]
+
+[size=4][b]Requirements[/b][/size]
+[color=#D4D4D8]None. This is a knowledge base, not an installable mod — there's nothing to load, enable, or place in your Windrose install. It's useful to anyone writing UE4SS Lua or compiled C++ mods for Windrose, regardless of what tools or engine version override they're using.[/color]
+
+[size=4][b]Permissions / License[/b][/size]
+[color=#D4D4D8][b]Public domain (CC0)[/b] — use it, copy it, fork it, mirror it, build on it, no attribution required. It's meant to be freely useful to the whole Windrose modding community, not just this project.[/color]
+
+[size=4][b]Credits[/b][/size]
+[color=#D4D4D8]Findings gathered while building [url=https://www.nexusmods.com/windrose/mods/519][b]Living Base Enhanced[/b][/url] and its C++ companion, LivingBaseSpawnMenu. Built iteratively with Claude.[/color]
