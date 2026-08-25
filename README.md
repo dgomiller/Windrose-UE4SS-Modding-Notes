@@ -25,6 +25,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
+`pakcontents.xlsx` — an export of every asset name inside the game's `.pak`/`.utoc` files, one sheet per file. Useful for finding a class/asset path to spawn or reference without digging through the raw archives yourself.
+
 ## Using it
 
 It's one file, so pick whatever fits your workflow:
