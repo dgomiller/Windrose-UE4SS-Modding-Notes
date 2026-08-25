@@ -966,6 +966,15 @@ debugger's typical crash-triage sequence: switch to the actual exception context
 reasonably deep backtrace with arguments, then quit. This turns "it crashes every launch" into an
 exact function/line within minutes, instead of guessing from symptoms alone.
 
+**Faster first pass**: most command-line debuggers also ship a one-shot "analyze" command that
+needs no manually-supplied symbol path at all — it auto-locates the exception context itself and
+additionally prints a short classification/hash of the failure. That alone is often enough to tell
+whether a NEW crash dump is the SAME recurring bug as a previous one (compare the classification
+across dumps) before spending time reading a full backtrace. This works even against a crash
+inside the mod loader's own binary or another mod entirely, with no local debug symbols needed for
+a triage-level read — symbols only matter once you need to resolve frames inside your OWN mod's
+code specifically.
+
 ### 12i. A mutex around one race can hide a second, independent race behind it
 After fixing a cross-thread ImGui race (§12g) with a mutex serializing UI calls between two
 windows' threads, the crash appeared to be gone — then came back under the same "every launch"
@@ -1156,6 +1165,16 @@ config/settings files for hardcoded key names first, not just the mod you're act
 a real collision reads identically to a crash in your own new code, and the two are easy to
 conflate without checking.
 
+**Recurred**: this exact lesson was NOT followed the next time a new key was assigned in the same
+project — a companion UI window's own tab-switch shortcut was picked without re-checking, and it
+turned out to collide with a completely different installed mod's own hardcoded menu-toggle key on
+the same F-row slot. No crash that time (a UI-level key check just silently does nothing on an
+unrecognized press, unlike a native input hook), but the identical root mistake: assigning a bare
+F-row key without grepping other installed mods' config files first. **A lesson from a past
+incident doesn't self-enforce** — write it into a literal pre-flight step ("before shipping ANY
+new keybind, grep the candidate key across every installed mod's own config file") rather than
+trusting it'll be remembered from having been hit once already.
+
 ### 12s. A native post-hook scoped to one instance can still fire from unrelated causes — the mechanism isn't the risk, the CHOICE of bound function is
 Click-detection (bind a button's click delegate to a harmless inherited function, hook that
 function scoped to one instance) worked perfectly with exactly one bound widget. The moment a
@@ -1279,3 +1298,21 @@ underlying loop's sleep interval suggests it should. A reusable timing-diagnosti
 is worth keeping around for checking whether a NEW suspected timing issue is this same phenomenon
 or something else — run it well into a session, not just at launch, since this decays rather than
 starting broken.
+
+### 12y: A generated integration manifest is only as complete as its OWN translation table — adding a new value to the primary consumer doesn't automatically reach a SECONDARY one
+A mod's own scripted keybind API accepts the scripting layer's internal key names directly, so a
+new keybind value works correctly in-game the moment it's added — no translation needed for that
+consumer. But a SEPARATE integration (an optional companion mod that generates its own in-game
+remap UI from a manifest file this mod writes) expected real engine key names instead of the
+scripting layer's own naming convention, and maintained its own one-way lookup table for the
+conversion. The new key value passed silently through that lookup table with no entry, falling
+back to the untranslated raw name — no error anywhere, no crash, no console warning — and only
+became visible by actually reading the generated manifest file's content and noticing one row
+looked different in shape from all the others (the raw internal name instead of a real engine-
+style key name like the surrounding rows). **Lesson**: when a single new value needs to flow
+through MULTIPLE independent consumers/translation layers (here: the scripting layer's own
+key-bind API directly, PLUS a second mod's separate key-name lookup table), adding it to the
+primary/obvious consumer is not evidence it reached every consumer — grep for every translation
+table that touches the same category of value and confirm the new one is actually present in each,
+or read the actual generated output rather than trusting the write path compiled/ran without
+error.
