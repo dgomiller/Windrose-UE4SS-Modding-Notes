@@ -1316,3 +1316,57 @@ primary/obvious consumer is not evidence it reached every consumer — grep for 
 table that touches the same category of value and confirm the new one is actually present in each,
 or read the actual generated output rather than trusting the write path compiled/ran without
 error.
+
+## 13. Placing an actor relative to a moving ship
+
+Confirmed live: an actor's position can be expressed in a ship's own local (forward/right/up)
+frame and stays put in that frame as the ship moves and turns — useful groundwork for a
+ship decor/crew feature. A separate third-party mod solves the same "keep a companion aboard the
+player's ship" problem with a more roundabout technique (deriving direction from two live-queried
+points — a helm-interaction component and the ship's own origin — rather than the ship's actual
+rotation); that mod's own history records an earlier attempt at the simpler rotation-based
+approach being withdrawn, without documenting why. The notes below are the result of testing that
+simpler approach directly.
+
+- **Finding the ship an actor is standing on**: `pawn.BasedMovement.MovementBase` — if the
+  engine's own moving-platform physics has picked the actor up, this resolves to the ship's
+  movement component; call `:GetOwner()` on it to get the actual ship actor. Falls back to
+  `pawn:GetAttachParentActor()` if `BasedMovement` isn't set. Both read cleanly with plain dot/
+  method access — no struct-drilling needed here (contrast §10's per-world identifier, a genuine
+  struct VALUE; `BasedMovement` behaved like a normal property holding an object reference in
+  practice).
+- **The local-offset transform (yaw-only) works, and holds through real movement.** Given the
+  ship's own actor location and yaw rotation, a local `(forward, right, up)` offset maps to world
+  space as a standard 2D rotation:
+  ```
+  worldX = shipX + forward*cos(yaw) - right*sin(yaw)
+  worldY = shipY + forward*sin(yaw) + right*cos(yaw)
+  worldZ = shipZ + up
+  ```
+  Live test: placed an actor via this math, then re-measured its offset (the inverse transform,
+  same formula solved backward) twice — once at rest, once after the ship had sailed roughly
+  1300 units and turned about 49 degrees. The recomputed local offset was IDENTICAL both times
+  (within about 1 unit / half a degree of measurement noise) despite the real movement and turn.
+  **The rotation-based approach the other mod's history suggested was unreliable actually works
+  fine for this** — at least for yaw; this test never exercised a very differently sized/shaped
+  hull, so the verdict is specific to the one hull class tested until checked on others.
+- **The actor's FINAL resting spot is not exactly the requested local offset — physics settles
+  it, and that settled offset is what actually stays stable.** A requested offset of roughly
+  300 units forward / 100 units up produced an actor that, once the engine's collision/gravity
+  resolved where it could actually stand, settled about 77 units short and 91 units higher than
+  requested — present already at the first check after placement and unchanged after that. Read
+  as the deck's actual height/slope at that spot not matching the flat assumption baked into a
+  single "up" constant, with gravity/capsule collision correcting for it once during the initial
+  settle. **Practical implication**: don't trust a computed local offset as an actor's final
+  position — place it, then IMMEDIATELY re-read its actual settled local offset (same
+  inverse-transform check) and use THAT going forward as the tuned value for that spot. Once
+  settled, it holds — this only needs doing once per placement spot, not per-frame or per-voyage.
+- **Once genuinely based on the ship's movement component, no further per-tick work is needed to
+  keep the actor correctly seated** — confirmed by the drift check above spanning a real
+  sail-and-turn with zero code running in between. The engine's own moving-platform physics
+  carries it, the same way it carries the player.
+- **Verifying a placement actually latched**: read the actor's own `BasedMovement.MovementBase`
+  owner back and compare it against the ship — same "never trust that a call succeeded without an
+  independent readback" discipline §2/§9 already establish for appearance work. A teleport-mode
+  location set is sufficient to trigger the engine into re-basing the actor; no explicit attach
+  call was needed.
