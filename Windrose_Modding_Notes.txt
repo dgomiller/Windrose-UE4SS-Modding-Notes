@@ -1423,3 +1423,14 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   trying a candidate: prefer paths under `Human/Regular/...` (where the one confirmed-working
   animation lived) and treat an `Environment/...` path as a likely prop animation, not a
   person-pose candidate at all.
+- **`Hero_`-prefixed animations are NOT a separate, incompatible skeleton — an initial "avoid
+  these" caution turned out wrong once actually tested.** The assumption was that "Hero" meant
+  "player-only rig," reasoned by analogy from a different, unrelated finding: this game's
+  `Hero_`-prefixed composite-mesh/body-shape params are confirmed to crash when applied to an
+  NPC. That analogy does not hold for ANIMATIONS — a `Human/Regular/Shared/.../A_..._Hero_
+  ..._Loop` sequence applied cleanly to a generic worker NPC, not a named character and nowhere
+  near the player. The real, confirmed filter stays the one above (`Human/Regular/...` good,
+  `Environment/...` bad); `Hero` vs. plain naming inside `Human/Regular/` does not by itself
+  predict compatibility either way. A different asset TYPE being player-locked does not mean
+  every asset family sharing that naming convention is equally restricted — worth testing rather
+  than assuming from a naming pattern alone.
