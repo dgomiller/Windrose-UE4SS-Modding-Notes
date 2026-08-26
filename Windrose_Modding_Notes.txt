@@ -761,6 +761,18 @@ what actually works:
   ORIGINAL wrapper instance (never the struct definition) for each field name found. This turns "I
   don't know this struct's shape" from a blocking problem into a fully mechanical, crash-safe
   discovery — no need to find the struct's definition in an object dump first.
+  **CORRECTION, confirmed live later: this does NOT extend to compiled AnimGraph execution
+  structs (`FAnimNode_*`/`AnimGraphNode_*`).** Every struct this recipe was proven safe against
+  (a per-world save identifier, a body-shape morph vector, a single-node animation-playback
+  struct) is genuine DATA — a value that sits still until something explicitly changes it. An
+  `AnimNode_*` struct is different in kind: a live execution node inside a compiled graph,
+  rebuilt every frame by the animation runtime, not a plain value holder. Attempting the exact
+  same three-step recipe on a property whose resolved type matched an execution-node family
+  crashed the game natively, with zero catchable output — the same pcall-uncatchable signature
+  documented elsewhere in this file for other confirmed-fatal calls. The general claim above still
+  holds for genuine data structs; it does not hold for compiled execution-graph nodes, and that
+  distinction — data struct vs. runtime execution node — is the one to check before assuming this
+  recipe is safe to reuse on a new, unfamiliar struct type.
 
 ---
 
