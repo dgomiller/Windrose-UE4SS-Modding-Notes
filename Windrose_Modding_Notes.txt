@@ -1412,3 +1412,14 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   A one-shot play (`false`) runs the animation through once and then stops, which reads as broken
   for a persistent "doing an activity" idle rather than a genuinely continuous one. Easy to miss
   since a one-shot still visibly "works" on the first playthrough.
+- **A folder path segment of `Environment` (as opposed to `Human/Regular`) is a strong signal the
+  animation drives an OBJECT, not a person, even when it's filed under the broader
+  `Character/Animations/` tree.** A workbench-interaction animation under an `.../Environment/
+  Workbenches/...` path T-posed a Character AND played an unrelated visual effect alongside it —
+  consistent with it actually being the workbench APPARATUS's own animation (its moving parts,
+  its spark/smoke effect), authored for that prop's own skeleton/rig, not a human one at all. The
+  matching `Environment/WorkBenches/` AnimBlueprints found in the same sweep (one per station
+  type) are almost certainly that object's own animation driver. Cheap pre-filter before even
+  trying a candidate: prefer paths under `Human/Regular/...` (where the one confirmed-working
+  animation lived) and treat an `Environment/...` path as a likely prop animation, not a
+  person-pose candidate at all.
