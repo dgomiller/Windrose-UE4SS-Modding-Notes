@@ -1412,6 +1412,14 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   A one-shot play (`false`) runs the animation through once and then stops, which reads as broken
   for a persistent "doing an activity" idle rather than a genuinely continuous one. Easy to miss
   since a one-shot still visibly "works" on the first playthrough.
+- **The same asset can appear under two different path casings in a full pak export, and only
+  one of them actually resolves.** A full asset-path listing (built from scanning every pak
+  chunk) showed one specific mesh under both a capitalized and a lowercase variant of the same
+  folder name as separate entries — almost certainly duplicate content across different pak
+  chunks. `StaticFindObject`/`LoadAsset` are case-sensitive enough that the wrong-cased path fails
+  to resolve, with a generic "did not resolve" message that gives no hint the asset actually
+  exists one case-variant away. Worth trying both casings before concluding an asset genuinely
+  isn't there.
 - **A folder path segment of `Environment` (as opposed to `Human/Regular`) is a strong signal the
   animation drives an OBJECT, not a person, even when it's filed under the broader
   `Character/Animations/` tree.** A workbench-interaction animation under an `.../Environment/
