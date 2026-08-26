@@ -22,6 +22,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 10. Finding which "world" (save) is currently loaded
 11. Content-replacer paks (asset overrides) — what's possible from Lua and what isn't
 12. Compiled C++ UE4SS mods — rendering an interactive overlay safely
+13. Placing an actor relative to a moving ship
+14. Playing a specific canned animation on a live Character
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
