@@ -1370,3 +1370,45 @@ simpler approach directly.
   independent readback" discipline §2/§9 already establish for appearance work. A teleport-mode
   location set is sufficient to trigger the engine into re-basing the actor; no explicit attach
   call was needed.
+
+## 14. Playing a specific canned animation on a live Character
+
+Confirmed live: a Character can be made to play one specific existing AnimSequence from the
+game's own animation library instead of whatever its AnimBlueprint would otherwise drive — useful
+for giving an NPC a specific activity pose (at a workbench, on a ship) rather than a generic idle.
+Getting there took three real, separate bugs, each worth knowing about on their own.
+
+- **`EAnimationMode::Type` is `AnimationBlueprint = 0, AnimationSingleNode = 1`.** Easy to get
+  backwards — a first attempt wrote `0` intending "single node" and instead wrote the mesh's
+  already-current default mode, so nothing visibly changed despite every call reporting success.
+- **The real `SetAnimationMode()` function can fail via a caught error for reasons that were
+  never root-caused** (possibly a reflection/marshaling issue with the enum-typed parameter that
+  function expects). A plain property write to the same field is NOT an equivalent substitute
+  here, unlike some other function-vs-property cases: the property write changes the stored flag
+  and reads back correctly, but the component's internal animation-playback instance never gets
+  swapped to match — so the OLD instance keeps actually driving rendering regardless of what gets
+  set afterward. Confirmed by a live test that read the mode genuinely change with every
+  subsequent call ALSO reporting success — and still nothing rendered. The working fix: call
+  `PlayAnimation(animSequence, bLooping)` instead — a single function built to switch modes AND
+  start playback together, with only an object reference and a bool as parameters (no raw enum to
+  marshal), which succeeded where the granular function call did not.
+- **Skeleton/rig compatibility is not predictable from folder naming.** Animations that sound
+  like they should apply broadly (organized under a shared path implying reuse across a whole
+  family of humanoid NPCs) are NOT safe to assume compatible across every Character class that
+  happens to use a similarly-named skeleton family. Playing a genuinely foreign animation on the
+  wrong skeleton produces a T-POSE — the mesh visibly freezes in its rest pose — while AI-driven
+  movement continues completely normally, since movement and pose rendering are separate systems;
+  a T-posed actor can still walk around. This was confirmed with TWO different animations, each
+  tested on a base class the animation was NOT associated with: both T-posed. The SAME animation
+  applied afterward to the SPECIFIC base class it WAS associated with (see the next point)
+  rendered correctly, no T-pose, on the first attempt — folder-name similarity is not the signal
+  that predicts success; a real, specific class association is.
+- **Finding a genuinely compatible animation without guessing blind**: an animation that already
+  shows up as a NATIVE default/fallback value on a target class's own AnimInstance (found via a
+  live property probe on an actor of that class) is real evidence it was authored for that exact
+  skeleton, not just a plausible-sounding guess from folder/file naming. This is what finally
+  produced a working result after two folder-plausible but class-mismatched guesses both T-posed.
+- **`PlayAnimation`'s second parameter is `bLooping` — default it to `true` for an ambient pose.**
+  A one-shot play (`false`) runs the animation through once and then stops, which reads as broken
+  for a persistent "doing an activity" idle rather than a genuinely continuous one. Easy to miss
+  since a one-shot still visibly "works" on the first playthrough.
