@@ -1454,3 +1454,71 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   predict compatibility either way. A different asset TYPE being player-locked does not mean
   every asset family sharing that naming convention is equally restricted — worth testing rather
   than assuming from a naming pattern alone.
+
+## 15. UE4SS's `ExecuteWithDelay` callback does not run on the game thread — and nesting it inside `ExecuteInGameThread` is a separate, differently-broken thing
+
+Two distinct, confirmed-live rules, easy to conflate into one wrong mental model:
+
+- **`LoadAsset` (and likely other game-thread-only engine calls) throws if called from inside an
+  `ExecuteWithDelay` callback directly.** The error is `Function 'LoadAsset' can only be called
+  from within the game thread`. A console-command handler or a key-bind callback's own
+  synchronous body IS on the game thread (the same call succeeds fine from there) — it's
+  specifically code that runs LATER, once an `ExecuteWithDelay` timer actually fires, that isn't.
+  This can look at first like "the asset needs to be warmed up / given more time to load" (a
+  manually-triggered resolve earlier in the session can make a later automatic one succeed) — that
+  is a red herring caused by the earlier resolve having already run on the game thread; the real
+  fix is hopping back via `ExecuteInGameThread` immediately before the actual engine call, not
+  retrying more or waiting longer.
+- **Calling `ExecuteWithDelay` from literally inside the callback function passed to
+  `ExecuteInGameThread` throws `No overload found for function 'ExecuteWithDelay'`.** So the fix
+  for the first rule can't simply be "wrap the whole retry function's body, recursive call and
+  all, in one `ExecuteInGameThread`" — that trades one error for the other. The confirmed-working
+  shape: the `ExecuteInGameThread` call (the actual engine-touching work) and the NEXT
+  `ExecuteWithDelay` call (scheduling the next retry tick) must be direct top-level SIBLING
+  statements in the retry function — never one nested inside the other's callback body. Calling
+  `ExecuteWithDelay` as the very first, synchronous action inside an `ExecuteInGameThread`
+  callback is fine either way; it's specifically the reverse nesting that throws.
+- **Consequence of `ExecuteInGameThread` being fire-and-forget/async**: a caller can't
+  synchronously know whether the work it just queued succeeded before deciding whether to
+  schedule a retry. The simplest robust pattern: retry a fixed number of times unconditionally
+  rather than gating on a success flag — re-doing an already-successful effect is harmless, and a
+  "did that work" flag read immediately after queuing the work is at best one tick stale.
+
+## 16. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName():ToString()` instead
+
+Confirmed in more than one project: a component-identity check using plain `==` (comparing a
+reference read from one property against another pulled from a `K2_GetComponentsByClass` array)
+can silently evaluate false on every single comparison — not an error, just always the wrong
+branch — so a "skip this one component" step never actually skips it. Switching to
+`comp:GetFName():ToString() == other:GetFName():ToString()` fixes it immediately. This failure
+mode produces no error and no crash — it just silently always takes the same branch — which
+makes it easy to misread as "the whole feature is broken" rather than "one identity check never
+fires." Actor-level `==` (comparing two actor references, not components) has not shown this
+problem — treat it as a component-specific gotcha, not a blanket rule against `==`.
+
+## 17. A third-party companion mod (Windrose Mod Settings) supports real slider and dropdown widgets, not just toggle/keybind — found by extracting strings from its compiled DLL, not its Lua source
+
+Windrose Mod Settings' own Lua-visible layer is pure generic file I/O (load/save a Lua table,
+publish a shared variable) with no type-specific validation or widget-selection logic at all —
+that logic lives entirely in its bundled native DLL, unreadable as source. A plain `type =
+"number"` setting registration (the obvious-seeming choice) is silently coerced into a checkbox
+— readable/writable only as 0 or 1 — with no error or warning suggesting a different type
+exists. Confirmed working alternative, found via a raw UTF-16LE string extraction of the DLL
+rather than more registration-schema guessing: the strings for this game's own native
+settings-screen slider/dropdown/toggle widget classes are directly referenced inside it,
+alongside the literal lowercase type strings `"scalar"` and `"discrete"` and a "skipped
+unsupported setting" diagnostic format string — real evidence of an actual type-dispatch branch,
+not just a checkbox default. Setting `type = "scalar"` (with guessed `min`/`max` fields — the
+DLL's exact expected field names are still unconfirmed) did render a real slider, confirmed
+live. No integer-step/interval field was found anywhere in the DLL's strings — the slider
+appears to be a continuous float with no snapping option exposed through this registration
+schema, so a fractional value is a completely normal thing for a player to land on while
+dragging it; round it explicitly on the Lua side when applying the saved value if a whole number
+is actually required, rather than assuming the UI can be made to snap.
+
+**Technique worth reusing on its own**: when a third-party mod's Lua-visible source doesn't
+explain an observed behavior, and it ships a compiled DLL, extracting printable strings from
+that DLL — both plain ASCII and, easy to miss, UTF-16LE (Windows/Unreal code frequently uses
+wide strings, which a naive ASCII-only scan won't find at all) — can reveal real internal type
+names, log format strings, and referenced native class paths: genuine evidence to test against,
+rather than continuing to guess at a black box from the outside.
