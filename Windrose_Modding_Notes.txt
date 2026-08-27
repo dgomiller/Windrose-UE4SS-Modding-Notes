@@ -1454,6 +1454,18 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   predict compatibility either way. A different asset TYPE being player-locked does not mean
   every asset family sharing that naming convention is equally restricted — worth testing rather
   than assuming from a naming pattern alone.
+- **A "safe" folder path is a useful first-pass filter, not proof — some assets filed there still
+  turn out to be OBJECT animations, not person animations.** A set of ship-cannon candidates lived
+  under a path matching every heuristic above and still T-posed a Character, paired with an
+  unrelated effect firing alongside it — the same symptom the earlier `Environment/`-path
+  candidate produced, because it turned out to be the cannon's own recoil/reload animation (an
+  object transform), not a sailor's pose, despite its folder placement. **A T-pose paired with an
+  unrelated effect firing is itself a signal to abandon that specific candidate** — it suggests an
+  object/scene animation with its own AnimNotify driving that effect, not a mis-filed person pose
+  worth retrying. The one filter that has actually held up every time is the positive one above:
+  does this exact asset already show up as a genuine native AnimInstance default/fallback value on
+  a real Character of the target skeleton family. Folder path — even a "should be safe" one — is a
+  hint, never a substitute for that check.
 
 ## 15. UE4SS's `ExecuteWithDelay` callback does not run on the game thread — and nesting it inside `ExecuteInGameThread` is a separate, differently-broken thing
 
