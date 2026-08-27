@@ -1466,6 +1466,18 @@ Getting there took three real, separate bugs, each worth knowing about on their 
   does this exact asset already show up as a genuine native AnimInstance default/fallback value on
   a real Character of the target skeleton family. Folder path — even a "should be safe" one — is a
   hint, never a substitute for that check.
+- **A combat/ability animation can carry a real gameplay-damage AnimNotify that fires even when
+  played this way on a completely inert, non-hostile actor — confirmed live, this actually
+  injured the player.** Playing a boss-type character's own attack/spell-cast animation on a
+  placed, untamed, non-AI prop via this exact playback mechanism caused REAL damage to a nearby
+  player. AnimNotify events fire off the animation's own timeline regardless of who or what is
+  playing it and regardless of AI/hostility state — an inert prop with no controller and no
+  intent to attack is not exempt just because nothing is "deciding" to cast the ability. There's
+  no established-safe way from Lua/UE4SS reflection to strip or suppress an AnimSequence's own
+  baked-in notifies before playing it. **Treat any combat/ability-sounding animation candidate
+  (attack windups, spell casts, spike/projectile-themed names) as a real risk to test from a safe
+  distance or with health to spare** — this class of animation is not the same kind of "worst
+  case is a T-pose" experiment an idle/activity pose candidate is.
 
 ## 15. UE4SS's `ExecuteWithDelay` callback does not run on the game thread — and nesting it inside `ExecuteInGameThread` is a separate, differently-broken thing
 
