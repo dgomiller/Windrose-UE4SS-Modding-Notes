@@ -1546,3 +1546,43 @@ that DLL — both plain ASCII and, easy to miss, UTF-16LE (Windows/Unreal code f
 wide strings, which a naive ASCII-only scan won't find at all) — can reveal real internal type
 names, log format strings, and referenced native class paths: genuine evidence to test against,
 rather than continuing to guess at a black box from the outside.
+
+## 18. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
+
+Building an interactive "aim and pick a world object" targeting system on top of a UE4SS-exposed
+`KismetSystemLibrary` line-trace API hit two separate, easy-to-miss pitfalls — both confirmed
+live, both worth checking for in any similar targeting system.
+
+- **A component-existence check returned by a reflection call can be non-nil but still invalid.**
+  A "get this component off an actor" call on an actor that has NO component of the requested
+  class does not return a plain nil in this build — it returns a non-nil sentinel object. A check
+  written as "is the result non-nil" is therefore ALWAYS true, regardless of whether the
+  component actually exists, silently breaking any logic gated on it (in one real case, an entire
+  fix meant to only skip one category of actor ended up skipping every actor, for several rounds
+  of otherwise-correct-looking follow-up work, because nothing downstream of the check ever ran).
+  The correct check also confirms the result is genuinely valid, not just that a variable got
+  assigned something — the same underlying rule already documented for array elements (`==`
+  comparisons on component references), now confirmed to apply to a plain single-object existence
+  check too. **This failure mode produces no error and no crash — it silently no-ops the exact
+  code path meant to fix something**, which reads identically to "the fix didn't work" and can
+  burn multiple debugging rounds before anyone thinks to check whether the code even ran at all —
+  a plain unconditional log line right before the return, checked against the actual log output,
+  is what caught it.
+- **An object-type-based line trace does not reliably hit every native class a channel-based
+  trace would.** Confirmed live: after fixing every other variable, a specific native
+  "destructible" prop class remained unhittable via an object-type trace querying a wide,
+  generous range of standard object types — while a plain channel-based trace against the
+  equivalent channel hit it immediately once something explicitly forced that channel's response
+  to Block. The two trace styles are not interchangeable substitutes for "find whatever's under
+  the reticle" in every case; a robust targeting system should treat them as complementary,
+  layered tiers — try the object-type trace first, then fall back to a channel-based trace
+  against the same logical channel if nothing was found — rather than assuming one fully subsumes
+  the other. Widening an object-type query's own type list costs nothing (a type nothing has just
+  never matches), so do that too, but don't rely on it alone to close every gap.
+- **When retrofitting a fix like this onto a wide, unopinionated raytrace meant to hit anything a
+  mod might place from a broad in-game asset catalog, test against the widest, weirdest class
+  actually reachable through that catalog, not just the first few obvious cases.** A
+  "destructible" furniture prop built on a resource/harvest-node system (visually identical to
+  ordinary decor, but using a different underlying collision setup) is exactly the kind of
+  outlier a narrow test pass never surfaces — it only showed up once the actual target class list
+  widened past what the targeting system was originally built and tested against.

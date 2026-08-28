@@ -27,6 +27,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 15. `ExecuteWithDelay`'s callback does not run on the game thread — and nesting it inside `ExecuteInGameThread` is a separate, differently-broken thing
 16. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName()` instead
 17. A third-party companion mod (Windrose Mod Settings) supports real slider and dropdown widgets, not just toggle/keybind — found by extracting strings from its compiled DLL
+18. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
