@@ -1640,19 +1640,32 @@ whatever families are wanted, mixed freely across families.
   the engine), but confirms there is no direct clone-an-existing-asset shortcut here. If a modified
   copy of an existing DataAsset is needed, the only currently-known route is constructing a brand
   new instance of the same class and populating its fields directly, not cloning-then-patching.
-- **Constructing the top-level category array as ONE large nested table literal in a single
-  assignment CRASHES THE GAME LIVE, confirmed.** The literal being assigned was an array containing
-  one struct that itself contained a gameplay-tag sub-table, a bool, and a map-shaped sub-array of
-  key/value pairs, all assigned in one write. The crash happened on this exact line — confirmed via
-  a log line printed immediately before the call: nothing followed it, ever, across the attempt.
-  Every simpler operation earlier in the same run (both object-construction calls, the flat
-  array-of-objects write above) completed cleanly moments before — so this is not a general failure
-  of object construction or array writes, it is specific to this level of nested, heterogeneous
-  structure assigned in one write. The untried next step, if this is revisited: writing each nested
-  field of that one category entry INDIVIDUALLY (the entry struct, then the tag alone, then the bool
-  alone, then the map-shaped sub-array alone) rather than one all-in-one table literal — since the
-  flat single-shape array write proved fine, the crash may be about how much heterogeneous nesting
-  was asked for in one write, not nested writes as a category.
+- **Constructing a category-array entry, narrowed down step by step, isolates the crash to ONE
+  specific operation: constructing a gameplay tag from scratch.** The original one-shot write (an
+  array containing one struct with a gameplay-tag sub-table, a bool, and a map-shaped sub-array,
+  all assigned together) crashed the game live. Splitting into three separate writes (the tag,
+  then the bool, then the map sub-array) crashed again — but isolated to the FIRST and simplest of
+  the three, ruling out "too much nesting in one write" as the cause. Splitting that into two even
+  finer sub-steps settled it: (a) writing the array with one COMPLETELY EMPTY entry (no tag at
+  all) — survives cleanly, confirming the array-of-structs mechanism itself is fine; (b) then, on
+  that same fetched-back entry, assigning the category tag alone — CONFIRMED TO CRASH THE GAME
+  LIVE, every time, in isolation from everything else. A log line printed immediately before this
+  exact call was the last line written across every attempt — nothing runs after it.
+  This was the first attempt anywhere in this investigation at CONSTRUCTING a gameplay tag from
+  scratch and handing it to the engine; every prior successful read of one was already-registered,
+  already-valid data loaded from a real asset. Gameplay tags are normally validated against a
+  registered tag hierarchy at construction time — a bare table (just a name string) apparently
+  does not satisfy whatever that validation expects, unlike a plain vector or name string, which
+  have no registry to consult at all. Every other operation tried in this investigation (both
+  object-construction calls, the flat array-of-object-references write, and the empty-struct array
+  write above) completed cleanly — this failure is specific to fabricating a gameplay-tag value out
+  of nothing, not a general problem with structs, arrays, or nested writes.
+  **The one untried, more-promising alternative**: rather than constructing a tag from a raw
+  string, read an ALREADY-VALID gameplay-tag struct value off a real asset that already carries the
+  category wanted (e.g. an existing character's own category-array entry already tagged for that
+  category) and copy THAT value into the new entry — a value copy between two struct fields, with
+  no fresh tag fabrication happening at all, which may sidestep whatever validation a from-scratch
+  construction fails. Not yet attempted.
 
 ### 19c. A related, already-proven primitive worth remembering here
 
