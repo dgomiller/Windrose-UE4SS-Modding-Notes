@@ -1586,3 +1586,78 @@ live, both worth checking for in any similar targeting system.
   ordinary decor, but using a different underlying collision setup) is exactly the kind of
   outlier a narrow test pass never surfaces — it only showed up once the actual target class list
   widened past what the targeting system was originally built and tested against.
+
+## 19. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
+
+### 19a. The real structure, confirmed via direct asset-JSON exports (not a live probe this time)
+
+A composite character's "swap the whole outfit" mechanism (a different class's outfit-params asset
+baked in at build time) and "patch one already-built slot" mechanism (documented earlier in this
+file) both treat the outfit as something to SWAP or PATCH — neither answers "can a genuinely new,
+custom combination of pieces be constructed from scratch." Exporting a real character's own
+outfit-params asset to JSON (via an external asset tool run directly against the `.uasset` files,
+not a live in-game probe) revealed the actual structure, three levels deep:
+
+1. **The top-level outfit-params asset** — an array, one entry per customization category (Armor,
+   Hairs, Facial hair, etc.). Each entry has a category tag (a plain gameplay-tag struct — one
+   `FName` field), a "player can customize this" bool, and a sex-keyed list of references to the
+   next level down. A category the player can't customize (a fixed character's Armor) lists exactly
+   ONE reference; a real player-facing picker category (Hairs, Eyebrows) lists dozens — this
+   literally IS the backing data for the game's own character-creation hair/eyebrow selector.
+2. **The mid-level "group" asset** — just a flat array of references to the bottom level, one per
+   body part. Confirmed on a real NPC's own outfit: six pieces (feet, hands, head, legs, torso,
+   belt) pulled from THREE different named armor families in the game's own catalog — proof that a
+   "group" is an arbitrary bundle, not a single-family outfit.
+3. **The bottom-level per-piece asset** (one per body part) — finally holds the real data: a plain
+   skeletal-mesh soft-path per sex, socket-attached extras (each with its own full baked
+   rotation/translation/scale transform — socket offsets ARE authored data, not something computed
+   at runtime), and baked color-index values. Confirming color is consumed at THIS level,
+   build-time-only, is the root cause of the already-documented "post-build color-controller writes
+   never render" dead end elsewhere in this file, not a contradiction of it.
+
+Every catalog family that already has ordinary in-game content almost certainly already has its own
+bottom-level per-piece asset for each of its pieces (confirmed for one family: a dozen pieces across
+4 body parts, several numbered variants each) — meaning a custom outfit does not require authoring
+new per-piece data from scratch, only a new mid-level "group" referencing EXISTING pieces from
+whatever families are wanted, mixed freely across families.
+
+### 19b. What's actually constructible from Lua — confirmed piece by piece, live
+
+- **A generic "construct a new object of an arbitrary class" call generalizes beyond the one class
+  it had ever been tried on before.** Already proven for a plain UMG text-block widget in earlier
+  UI work; confirmed live in this investigation on two completely different, unrelated classes (the
+  mid-level group asset, then separately the top-level outfit-params asset) — both constructed
+  cleanly, no crash, no special handling beyond resolving the right class path first.
+- **Writing an array of HARD OBJECT REFERENCES onto a UPROPERTY works via plain table assignment.**
+  Every property write documented elsewhere in this file up to now has been a scalar, a
+  vector/quaternion-shaped struct, or a single object/texture reference — never an array of object
+  pointers. Confirmed live: assigning a flat table of already-resolved object references directly to
+  the array property populated it correctly on the first attempt, verified by re-reading the array's
+  element count afterward — no per-element "add" fallback needed.
+- **A "duplicate this existing object" primitive is NOT exposed as a global in this UE4SS binding,
+  under either its Blueprint-facing name or its underlying engine name.** Calling either produces a
+  clean "attempt to call a nil value" error — safe to probe (a nonexistent global can never reach
+  the engine), but confirms there is no direct clone-an-existing-asset shortcut here. If a modified
+  copy of an existing DataAsset is needed, the only currently-known route is constructing a brand
+  new instance of the same class and populating its fields directly, not cloning-then-patching.
+- **Constructing the top-level category array as ONE large nested table literal in a single
+  assignment CRASHES THE GAME LIVE, confirmed.** The literal being assigned was an array containing
+  one struct that itself contained a gameplay-tag sub-table, a bool, and a map-shaped sub-array of
+  key/value pairs, all assigned in one write. The crash happened on this exact line — confirmed via
+  a log line printed immediately before the call: nothing followed it, ever, across the attempt.
+  Every simpler operation earlier in the same run (both object-construction calls, the flat
+  array-of-objects write above) completed cleanly moments before — so this is not a general failure
+  of object construction or array writes, it is specific to this level of nested, heterogeneous
+  structure assigned in one write. The untried next step, if this is revisited: writing each nested
+  field of that one category entry INDIVIDUALLY (the entry struct, then the tag alone, then the bool
+  alone, then the map-shaped sub-array alone) rather than one all-in-one table literal — since the
+  flat single-shape array write proved fine, the crash may be about how much heterogeneous nesting
+  was asked for in one write, not nested writes as a category.
+
+### 19c. A related, already-proven primitive worth remembering here
+
+Rebinding a swapped-in skeletal mesh component to share the actor's own skeleton/animation via a
+"leader pose" style call is NOT new or unproven engine surface — it was already a working, shipped
+technique from earlier per-slot mesh-swap work (documented earlier in this file) before this
+investigation started. Worth checking a project's own prior notes before treating a call as
+untested just because it's new to the specific feature currently being built.
