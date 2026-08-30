@@ -1821,6 +1821,23 @@ looked like a real counter-example and was investigated exhaustively rather than
   component with real gameplay logic baked into its code, not just data fields) — for those, only the
   class's layout is knowable this way, not what it actually does at runtime.
 
+**This route has since been tried and confirmed, not just reasoned through.** A generic UE4SS build
+ships its own SDK/header-stub generator built in — no external tool required — producing the same
+kind of reflected-layout header stubs described above for every class the running game exposes,
+including the target game's own custom data classes. A minimal standalone editor project was set up
+against a handful of those generated headers (the exact classes this investigation's own new-path
+test used) and compiled clean on the second attempt — the one real gotcha: a stub generator's
+`CROSS-MODULE INCLUDE` markers are commonly just informational comments, not real `#include`
+directives, so a cross-module reference (an enum or struct defined in another generated module) needs
+its real header added by hand or the build fails with that type undeclared. Opening the resulting
+project in a real editor confirmed the actual end-to-end claim: the editor's own asset-creation UI
+genuinely lists the target game's own custom data classes as instantiable types, right alongside
+native engine ones — proof that this path really does reach the point of being able to author a new,
+real instance of the game's own proprietary data class, with a real editor cook available to bake the
+registry metadata a brand-new package needs. Not yet carried further to actually populating one with
+real data and cooking/shipping it as a loadable package — that remains open — but the core premise of
+this whole section is no longer just a plausible theory.
+
 **Conclusion, tested far past the point of reasonable doubt with the tools actually used in this
 investigation**: within this toolset (byte-level conversion/editing of already-cooked assets, no real
 editor cook pipeline of any kind), a wholly new, independent asset path cannot be made discoverable at
