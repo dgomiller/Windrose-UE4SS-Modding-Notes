@@ -1660,12 +1660,111 @@ whatever families are wanted, mixed freely across families.
   object-construction calls, the flat array-of-object-references write, and the empty-struct array
   write above) completed cleanly — this failure is specific to fabricating a gameplay-tag value out
   of nothing, not a general problem with structs, arrays, or nested writes.
-  **The one untried, more-promising alternative**: rather than constructing a tag from a raw
-  string, read an ALREADY-VALID gameplay-tag struct value off a real asset that already carries the
-  category wanted (e.g. an existing character's own category-array entry already tagged for that
-  category) and copy THAT value into the new entry — a value copy between two struct fields, with
-  no fresh tag fabrication happening at all, which may sidestep whatever validation a from-scratch
-  construction fails. Not yet attempted.
+  **UPDATE — the alternative above was tried, and refines rather than confirms the original
+  theory.** Reading an already-valid gameplay tag off a real asset and copying that value onto the
+  fetched-back entry (a struct-to-struct value copy, no fabrication) worked — confirmed live, no
+  crash. Building the rest of the entry via the same staged pattern also survived. So far so good —
+  but the resulting actor spawned fully nude: a live probe showed the build produced zero composite
+  mesh pieces for any category, not just the one being tested. A separate diagnostic (copying an
+  existing character's entire category array wholesale onto a freshly-constructed params object, no
+  modification at all) confirmed a fresh object CAN build correctly — ruling out "fresh objects
+  never build." Appending real Hairs/Eyebrows entries alongside the custom one (still copied
+  verbatim, unmodified) also didn't help — ruling out "missing categories" as the cause.
+  Suspecting the staged fetch/mutate/reinsert pattern itself might be producing a value that reads
+  back self-consistently in the scripting layer without being what the native build code actually
+  consumes, the next attempt tried building the whole entry (copied tag included) as one single
+  table-literal assignment — the same shape as the very first crash, except with a copied tag
+  instead of a fabricated one. This also crashed, twice, reproducibly — both when combined with real
+  pre-existing entries in the same write, and even completely alone (just the one custom entry,
+  nothing else in the array). This is the decisive result: it rules out "tag fabrication
+  specifically" as the actual cause, and rules out "mixing freshly-built and pre-existing entries"
+  too. The real rule, as best understood: constructing a brand-new struct value via a table literal,
+  in one shot, as a new array element, crashes — regardless of what's inside it or what else is in
+  the array. The only pattern ever confirmed to add a new struct element without crashing is: insert
+  a completely empty placeholder first, fetch it back out of the array, then mutate its fields one at
+  a time via separate property assignments on that live handle — never construct a populated struct
+  as part of the insertion literal itself.
+  Net status of the runtime-construction approach: the crash risk is now well understood and
+  avoidable, but the safe pattern still doesn't produce a working build — this whole runtime
+  approach was eventually abandoned in favor of the offline-asset-editing recipe below, which
+  turned out to be the actual answer.
+
+### The recipe that actually worked: edit a real asset file offline, don't construct one at runtime
+
+Stepping back from constructing composite-outfit data from a running game and asking a different
+question instead — "can an existing real asset file be edited directly, outside the game, and
+shipped as a small content mod?" — turned up a complete, crash-free pipeline that actually works
+end to end. This is worth reaching for first for this whole class of problem.
+
+**Tools**: a proper asset browser/exporter with a game-specific mappings file (many UE4SS builds can
+generate one via a bundled console command wrapping the engine's own reflection dump); a low-level
+UE5 IoStore/Zen-to-Legacy pak converter (`retoc`, open source); a `.uasset` property editor that
+understands the legacy, non-Zen format (`UAssetGUI`, also open source, wants the same mappings
+file); and a modern `.pak` container writer (`repak` — not necessarily the engine's own bundled pak
+tool, which choked on both extracting a converted legacy pak and on the game's own real paks with
+checksum/version mismatches in this instance).
+
+**The recipe:**
+1. **Export the real target asset in properly cooked, byte-exact form.** A generic JSON export from
+   an asset browser is useful for understanding structure but is a different schema from what a
+   `.uasset` editor can round-trip. Many modern UE5 games ship content as Zen/IoStore containers,
+   and a legacy-format asset editor cannot open a Zen asset directly — it needs the older
+   `.uasset`+`.uexp` pair instead, obtained via a Zen-to-Legacy conversion tool, filtered down to
+   just the asset(s) actually needed (a plain substring filter, not a glob).
+2. **Edit the extracted asset in the legacy-format editor.** An object reference inside a composite
+   data structure may not be editable directly in a read-only "resolved value" view — check for a
+   lower-level import/reference table instead, where each reference typically shows up as a pair of
+   rows (one holding the full package path, one holding the short object name) as plain editable
+   text. Retargeting both to a different asset's path/name repoints the reference entirely, with no
+   need to add a new entry. No manual string-table bookkeeping is needed for this — typing a brand
+   new string into an editable name field auto-registers it in the package's own name table on save.
+3. **Decide: a brand-new asset at a new path, or an override of an existing one — this choice
+   matters enormously, see below.** If duplicating into a new asset, also update its own internal
+   package-identity field (separate from the destination filename) to a genuinely new path.
+4. **Convert the edited legacy asset back to Zen/IoStore format**, staged under a folder tree
+   mirroring the game's own logical content path. This alone is usually enough — avoid trying to
+   further hand-edit the resulting container's own internal mount point unless there's a specific,
+   confirmed reason to, since the higher-level conversion command may hardcode that field with no
+   flag to override it (a real, independently-corroborated limitation of at least one public tool in
+   this space), and a manual low-level round-trip to work around it risks silently corrupting the
+   container's own internal header — such a container can still report success from a basic info
+   tool while a real parser throws a hard "chunk not found" exception the moment it tries to actually
+   read anything from it. Confirming a container is genuinely sound before trusting it in-game means
+   opening it in a real asset browser and confirming a clean read — a basic info tool succeeding is
+   not sufficient evidence on its own.
+5. **Build the sidecar `.pak` with a dedicated pak-writing tool, checked against a known-working
+   installed mod's own convention.** A Zen/IoStore mod's tiny companion `.pak` legitimately has zero
+   file entries in its own index — that alone is not a sign of a broken pak. What can differ, and
+   matters: its own MOUNT POINT setting. A plain converter's auto-generated companion pak may use a
+   different mount-point convention than an already-working installed mod's own pak — building a
+   fresh, minimal pak with the matching mount point (once identified by inspecting a known-good
+   example) fixed this in practice; the same trivial rebuilt pak can be reused unmodified as the
+   sidecar for many different container payloads, since it carries no real content of its own either
+   way.
+6. **Install using the same per-mod-subfolder layout an already-working content mod uses** (see the
+   pak-mounting section elsewhere in this file) — and remember mounting only happens at a full
+   relaunch, never a hot reload.
+
+**The single most important finding**: a genuinely brand-new package path — one that never existed
+anywhere in the original shipped game — could not be made to resolve at runtime no matter how
+correctly the container was built, confirmed against a container built the exact same clean way
+that DOES work for an override. Overriding an EXISTING, already-known asset path — same recipe,
+only the target choice differs — worked immediately and completely: editing a real character's own
+composite-outfit asset in place (same filename, same internal identity, no duplication at all) to
+retarget one piece reference to a different asset, and simply letting that character's own
+untouched, already-shipped top-level data go on referencing it by the same path it always has,
+produced the character visibly wearing the swapped piece on the very first clean-container attempt
+— with zero runtime code changes of any kind. The likely explanation (not independently confirmed,
+but consistent with every observation): a Shipping-cooked build commonly resolves packages against
+a manifest baked in at cook time, not by discovering arbitrary new content dynamically — a path
+already in that catalog resolves regardless of which container currently supplies its bytes (the
+mechanism every already-installed content-replacement mod in a game like this already relies on),
+but a path that was never in the catalog has nothing for a bare string-path load to find, even
+inside an otherwise perfectly valid container. Practical consequence: a genuinely custom
+archetype/outfit built this way cannot be a brand-new independent asset — it has to live at the
+path of some existing, already-referenced one. This is a real design constraint, not just an
+implementation detail: it means "reskin an existing identity," never "add a wholly new one," for as
+long as this constraint holds.
 
 ### 19c. A related, already-proven primitive worth remembering here
 
