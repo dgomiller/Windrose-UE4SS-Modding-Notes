@@ -1766,6 +1766,80 @@ path of some existing, already-referenced one. This is a real design constraint,
 implementation detail: it means "reskin an existing identity," never "add a wholly new one," for as
 long as this constraint holds.
 
+### A real third-party counter-example investigated exhaustively — same conclusion holds; the wall is the tooling, not the engine
+
+A separate, independently-installed third-party mod was found shipping a package at a path that
+provably does not exist anywhere in the base game — genuinely new content, apparently working. This
+looked like a real counter-example and was investigated exhaustively rather than dismissed:
+- The mod's own script never resolves its new class by path at all — it only watches for the engine
+  itself to construct a live instance, then reacts. Something else does the actual first load.
+- That something else turned out to be a well-known, engine-native "Blueprint mod" convention: a
+  bundled loader component watches a specific folder (one subfolder per mod, each with a small
+  config file naming the class to load) and, for each mod pak found there, resolves the class via a
+  different, higher-level asset-registry API than the plain find/load combo used everywhere else in
+  this investigation, then explicitly spawns one instance itself.
+- Every element of that convention was reproduced exactly and tested one variable at a time, ruling
+  each out in turn: the sidecar container's own mount point — no effect. The main container's
+  internal mount point — no effect (and hand-patching it risks real corruption, not needed for an
+  override and didn't help here either). The higher-level asset-registry API in place of the plain
+  find/load combo — no effect, since it also depends on the target already being known; it isn't
+  itself a magic loader. The special mod folder, flat — no effect. The special mod folder, correctly
+  nested one-subfolder-per-mod with its own matching config — no effect: the same native loader
+  component still reported an identical failure for a duplicated real data asset at this new path.
+  Asset TYPE (a plain data object vs. a genuine Blueprint actor class) — no effect either: repeating
+  the exact same test with a duplicated, repathed Blueprint actor class produced the identical
+  failure, through the exact same native mechanism, at a genuinely new path with zero base-game
+  references.
+- Every controllable variable was matched to the working mod's own setup and still failed
+  identically. The one variable that couldn't be matched was how the working mod's own package was
+  actually built — its own public source repository's build documentation was found and checked
+  directly rather than left as a guess. It states plainly that the cooked container files "require a
+  compatible <Game>/Unreal development environment and are not reproducible in a generic [CI]
+  runner." That rules out the simplest theory (a fully generic, game-agnostic project with zero
+  game-specific setup) — but doesn't mean the author had the target game's own proprietary source
+  either, which isn't realistic for a commercial game's modding community. The more plausible
+  reconciliation: an SDK-stub-based modding setup — generating header stubs for the target game's
+  own reflected native classes (a real, established technique; tools exist that do exactly this by
+  inspecting a RUNNING game's own reflection data, no source access needed) and building a separate
+  editor project against those generated stubs, so the editor can compile and cook content that
+  references or even derives from the target game's own native types, without ever touching the
+  game's actual proprietary implementation. Whichever exact variant it was, the same underlying
+  point holds: a real editor cook, of some kind, is what bakes the asset-registry metadata a new
+  package needs to be discoverable — the recipe documented above can duplicate an EXISTING package's
+  structure byte-for-byte (exactly why overriding an existing path works flawlessly), but it never
+  performs a real cook, so it cannot fabricate the registry metadata a genuine cook generates for a
+  package that never existed before.
+  This draws a real, usable line, and it may be wider than it first looks: an SDK-stub-based project
+  needs the game's reflected CLASS LAYOUT (property names/types/offsets, generatable with no source
+  access), not its underlying compiled implementation. Authoring a new instance of a plain data class
+  (setting property values in the editor's own asset-creation UI) only ever needs that layout — the
+  actual game-specific compiled logic is irrelevant to a data asset, which has none of its own. That
+  means this route is not necessarily limited to purely generic/vanilla content — it could plausibly
+  extend to authoring genuinely new instances of this investigation's own actual target classes too,
+  since those are the same kind of plain, logic-free reflected data classes. What it almost certainly
+  cannot do is author new instances of a class whose own compiled BEHAVIOR matters (a native actor/
+  component with real gameplay logic baked into its code, not just data fields) — for those, only the
+  class's layout is knowable this way, not what it actually does at runtime.
+
+**Conclusion, tested far past the point of reasonable doubt with the tools actually used in this
+investigation**: within this toolset (byte-level conversion/editing of already-cooked assets, no real
+editor cook pipeline of any kind), a wholly new, independent asset path cannot be made discoverable at
+runtime by any means found — not a different resolution API, not a different install location/
+convention, not a different asset type. Overriding an existing, already-referenced path remains the
+one proven, reliable, repeatable way to ship custom content with these specific tools, and is what
+the working recipe documented above is built on.
+A genuinely different, NOT YET ATTEMPTED path was identified and reasoned through, not just
+theorized in the abstract: building an SDK-stub-based editor project (generating header stubs for a
+game's own reflected native classes via a tool like this, no source access needed, then authoring and
+cooking new content against those stubs in a real, separate editor project) would very plausibly let
+a genuinely new asset — for a plain data class, quite possibly even a game's own proprietary data
+classes specifically — become properly discoverable at runtime, since a real cook is what bakes the
+asset-registry metadata this whole investigation found missing every other way. This is a
+substantially bigger undertaking than anything in this investigation (a full editor install, an
+SDK/stub generation pass, real project setup) and was not pursued — worth returning to as a real,
+credible next step if the "reskin an existing identity" constraint ever becomes a genuine limitation
+worth the extra tooling investment.
+
 ### 19c. A related, already-proven primitive worth remembering here
 
 Rebinding a swapped-in skeletal mesh component to share the actor's own skeleton/animation via a
