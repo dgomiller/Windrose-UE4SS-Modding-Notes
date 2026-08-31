@@ -37,6 +37,37 @@ Proven live: with an archetype preset pinned pre-build, 7 spawns of the same cla
 different ethnicities anyway. Confirmed on multiple unrelated classes (a crew pawn, a citizen
 walker). **Do not retry this approach — it's a wall, not a bug to work around.**
 
+**A base class whose archetype LOOKS stable across ordinary spawns is not evidence it skips this
+wall — test an actual override directly before assuming an exception exists.** A different,
+non-mob/crew base class showed an identical archetype value across many spawns with zero pre-build
+writes involved, which looked like it might be a class that simply doesn't re-randomize. Testing it
+directly (pinning a different, curated archetype preset pre-build, alongside an already-proven
+custom outfit override in the same spawn) disproved that: the pre-build write resolved and applied
+with no error, but a live probe after the actor was fully spawned showed the archetype had reverted
+to the class's own default — the outfit stuck, the archetype did not. The real explanation: this
+class's own reassertion source apparently has only one possible value, so it always reasserts the
+SAME thing regardless of what's written pre-build — apparent stability was never evidence of
+skipping the reassertion, just evidence of a single-entry source. This closes off the one
+plausible-looking exception to the wall above — it appears to be universal to every class with this
+kind of composite-mesh component, not scoped to mob/crew classes specifically.
+
+**A native module's own bundled content root can be completely invisible to an offline pak-scanning
+tool, while the game's own live AssetRegistry knows about it fine.** A real, live-resolvable asset
+(confirmed valid via a live probe across multiple spawns) lived under a package root belonging to a
+separate native module's own content mount, not the main project's usual root — an offline
+filename-substring scan across the ENTIRE content-paks folder found zero matches for it under any
+filter tried, even ones confirmed working for ordinary content moments earlier. This is very likely
+a separate native-module content mount an offline pak scanner's generic folder walk doesn't reach,
+not a sign the asset doesn't exist. The fix: ask the game's own AssetRegistry directly instead of
+continuing to guess offline — a standard "get every asset of this class" API enumerates every
+registered asset of a given type regardless of package root or whether it's currently loaded. One
+real gotcha building a tool around this: each result comes back as a struct VALUE returned from
+inside an array — the exact shape documented above for struct-valued array elements — printing it
+naively gives a useless raw-address string; the fix is the same "call the type-introspection method
+and the generic property-enumeration method directly on the value" recipe already established, not
+a fresh problem. This technique is broadly useful any time an asset's path is known (from a live
+probe) but its exact identity or sibling assets need confirming and static extraction can't find it.
+
 Crew archetypes live at
 `/R5BusinessRules/Character/Customization/NPC/ShipCrew/Sailor/Preset/DA_Mob_Regular_Sailor_Preset_Archetype<Ethnicity>`
 (Adventurer, African, Albion, Fable, Native, Orient, Scum). Mobs generally use ONE shared preset
