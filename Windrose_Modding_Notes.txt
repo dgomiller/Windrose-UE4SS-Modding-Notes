@@ -1846,6 +1846,32 @@ registry metadata a brand-new package needs. Not yet carried further to actually
 real data and cooking/shipping it as a loadable package — that remains open — but the core premise of
 this whole section is no longer just a plausible theory.
 
+**Update — carried further, and the new-path wall above is now broken through, with the actual
+mechanism identified rather than just a working recipe.** A real instance of one of the target game's
+own custom data classes, authored and cooked by the SDK-stub project above, was packaged the exact
+same retoc/repak way documented earlier in this file and installed as a normal content-mod pak. It
+resolved via the higher-level asset-registry API at a path under the SAME reserved namespace the
+engine-native "Blueprint mod" loading convention already uses for its own mod discovery folder (see
+the counter-example investigation above) — and MISSED at an otherwise-identical path outside that
+namespace, with literally nothing else different about the container or the toolchain. This strongly
+implies the target game's own cook process specifically whitelists that one namespace to support the
+third-party mod-loading convention — not that "any new path works once properly cooked." Confirmed
+against a live third-party control too: a separate real mod's own genuinely-new package (the same one
+investigated exhaustively above) was installed and queried directly, and resolved the same way — this
+had been assumed to work based on its own description, never actually verified independently before.
+Separately, the plain find/load combo this file's whole recipe already relies on still could NOT see
+the new package even once the asset-registry API proved it was genuinely resolvable — confirming these
+are two different resolution paths reaching different internal state, not two ways of asking the same
+question. The practical fix: give the plain find/load helper a fallback to the asset-registry API when
+its normal two-step check both miss, splitting the path into its package/asset-name pieces on the last
+dot. This is a small, one-time change to a single shared helper that transparently extends every
+existing caller built on top of it. **Net effect: authoring genuinely new content for a plain data
+class is a solved problem, provided it's packaged under the engine's own reserved mod-namespace
+convention** — this reverses this section's own earlier, more pessimistic reading of the exhaustive
+investigation above, which correctly ruled out the OLD toolset (byte-hacked, no real cook, no
+namespace awareness) but did not yet have a real cook combined with the right namespace to test
+against.
+
 **Conclusion, tested far past the point of reasonable doubt with the tools actually used in this
 investigation**: within this toolset (byte-level conversion/editing of already-cooked assets, no real
 editor cook pipeline of any kind), a wholly new, independent asset path cannot be made discoverable at
