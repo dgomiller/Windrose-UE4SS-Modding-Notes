@@ -251,6 +251,40 @@ needing the much bigger "author a genuinely new pawn class" undertaking describe
 that bigger project is only needed for baking the archetype in as a genuine compiled class default,
 which turns out to be a separate, optional refinement rather than a prerequisite.
 
+**A reasonable follow-up question — "if a body mesh can now be swapped post-build, can color be
+re-evaluated too" — was tested exhaustively, and the original color-is-dead conclusion holds, now
+for a much clearer reason.** The body-mesh fix worked by bypassing the config-property layer
+entirely and swapping the underlying render component directly. The natural next question: does a
+dynamic material instance, created directly on the actual equipped piece's own render component
+(never tried before — only two OTHER call-site variants of this same engine function had been tried
+and confirmed-crashed previously), let color be set the same way. Tested across four argument
+combinations: calling with exactly the real C++ signature's own declared parameter count crashed the
+game natively on the very first call, with zero log output at all. Calling with one additional
+placeholder argument did not crash, but produced an identical generic failure across every value
+tried for that placeholder and for the other real parameter — strong evidence the failure is a
+binding-level limitation for this specific engine function, not a fixable call-shape mistake. This
+is now the THIRD independently-confirmed failure mode for the same underlying engine function across
+this project's history, at three different call sites. One serious related finding along the way: an
+attempt to inspect this exact function's real parameter list via LIVE reflection (not even invoking
+it, just reading its declared signature) also crashed the game natively — confirming reflection is
+not unconditionally safe either (see the struct-walk crash documented in the crash-traps section
+above; this is a second, independent instance of the same broader lesson, this time for a large
+native class's own function list rather than a struct returned from an API). The real signature was
+instead found safely from the SDK-generated header dump directly, no live game risk at all — a
+reusable lesson: when live reflection on a function's signature seems risky, checking the SDK's own
+generated headers is both safer and just as authoritative, since they're generated from this exact
+game's own reflection data in the first place. Separately confirmed there's no fallback either: the
+mechanism that DOES work for skin tone relies on a small, discrete, pre-baked set of ethnicity-
+specific materials to swap between — searching the game's own materials directly for a genuinely
+new discovery this session (an asset-registry class-enumeration technique found engine-native
+content invisible to typical offline pak scanning tools) found no equivalent discrete color-variant
+set exists for garment materials at all. Conclusion: garment color has no safe intervention point
+anywhere in this engine, for a genuinely different and more thorough reason than assumed
+previously — it isn't merely that color is "consumed once and never re-read," it's that the ONE
+remaining theoretically-available mechanism for touching it post-build is itself not safely callable
+from this tooling in any tested form, and there's no discrete alternative to swap to as a workaround
+either.
+
 ---
 
 ## 3. THE CRASH TRAPS (each cost real debugging hours)
