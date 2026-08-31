@@ -1520,25 +1520,33 @@ makes it easy to misread as "the whole feature is broken" rather than "one ident
 fires." Actor-level `==` (comparing two actor references, not components) has not shown this
 problem — treat it as a component-specific gotcha, not a blanket rule against `==`.
 
-## 17. A third-party companion mod (Windrose Mod Settings) supports real slider and dropdown widgets, not just toggle/keybind — found by extracting strings from its compiled DLL, not its Lua source
+## 17. A third-party companion mod (Windrose Mod Settings) can PROBABLY render a real slider and dropdown widget — a single unconfirmed exploratory test, not a proven recipe
+
+**This finding was never revisited or adopted into any shipping integration** — treat it as a
+promising lead worth re-testing, not a settled capability. In particular, only the widget
+RENDERING was ever confirmed; whether a value dragged on it actually round-trips (saves, and
+reads back correctly on the consuming side) was never tested.
 
 Windrose Mod Settings' own Lua-visible layer is pure generic file I/O (load/save a Lua table,
 publish a shared variable) with no type-specific validation or widget-selection logic at all —
 that logic lives entirely in its bundled native DLL, unreadable as source. A plain `type =
-"number"` setting registration (the obvious-seeming choice) is silently coerced into a checkbox
-— readable/writable only as 0 or 1 — with no error or warning suggesting a different type
-exists. Confirmed working alternative, found via a raw UTF-16LE string extraction of the DLL
-rather than more registration-schema guessing: the strings for this game's own native
-settings-screen slider/dropdown/toggle widget classes are directly referenced inside it,
-alongside the literal lowercase type strings `"scalar"` and `"discrete"` and a "skipped
-unsupported setting" diagnostic format string — real evidence of an actual type-dispatch branch,
-not just a checkbox default. Setting `type = "scalar"` (with guessed `min`/`max` fields — the
-DLL's exact expected field names are still unconfirmed) did render a real slider, confirmed
-live. No integer-step/interval field was found anywhere in the DLL's strings — the slider
-appears to be a continuous float with no snapping option exposed through this registration
-schema, so a fractional value is a completely normal thing for a player to land on while
-dragging it; round it explicitly on the Lua side when applying the saved value if a whole number
-is actually required, rather than assuming the UI can be made to snap.
+"number"` setting registration (the obvious-seeming choice) rendered as a checkbox instead —
+readable/writable only as 0 or 1 — with no error or warning suggesting a different type exists.
+Found via a raw UTF-16LE string extraction of the DLL rather than more registration-schema
+guessing: the strings for this game's own native settings-screen slider/dropdown/toggle widget
+classes are directly referenced inside it, alongside the literal lowercase type strings
+`"scalar"` and `"discrete"` and a "skipped unsupported setting" diagnostic format string — real
+evidence of an actual type-dispatch branch, not just a checkbox default. Setting `type =
+"scalar"` (with guessed `min`/`max` fields — the DLL's exact expected field names are still
+unconfirmed) did render a real slider widget on screen, confirmed live — but whether a value
+moved on it saves and reads back as the right number was never checked. No integer-step/interval
+field was found anywhere in the DLL's strings — the slider appears to be a continuous float with
+no snapping option exposed through this registration schema, so a fractional value would be a
+completely normal thing for a player to land on while dragging it, if the guessed field names are
+even the real ones; round it explicitly on the consuming side if a whole number is actually
+required, rather than assuming the UI can be made to snap. **Before relying on this**: confirm
+the full round trip (drag a value, restart or re-read, confirm the same number comes back), not
+just that the widget appears on screen.
 
 **Technique worth reusing on its own**: when a third-party mod's Lua-visible source doesn't
 explain an observed behavior, and it ships a compiled DLL, extracting printable strings from
