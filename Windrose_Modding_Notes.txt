@@ -1872,6 +1872,39 @@ investigation above, which correctly ruled out the OLD toolset (byte-hacked, no 
 namespace awareness) but did not yet have a real cook combined with the right namespace to test
 against.
 
+**Update — carried all the way through, confirmed live with real content rendering on a genuinely
+new, independent character, not just a discoverable empty package.** One more real refinement
+along the way: a byte-relabeled copy of ALREADY-SHIPPED content — even one carrying a real,
+previously-proven internal edit, just given a new package identity via the same text-editing
+technique documented earlier in this file — still MISSED under the reserved mod namespace. This
+proves the namespace alone isn't sufficient either: the package also needs an actual fresh cook,
+not a relabeled copy of bytes that were originally cooked as something else entirely. The working
+fix: author the container fresh via the editor (its own scripting interface works fine for this —
+creating instances, setting nested struct/map/hard-object-array properties all succeeded directly,
+with none of the crash risk documented earlier in this file for live in-process reflection, since
+this goes through the editor's own first-party object-authoring path rather than reflecting into an
+already-running game) using a placeholder value purely to have something valid to reference, cook
+that for real, and ONLY THEN retarget the one deep reference from the placeholder to a real existing
+piece of content via the same Import Data text-editing trick already proven for overrides —
+critically, without ever touching the freshly-cooked container's own package identity in that second
+pass. This mirrors exactly how the override technique already worked, just applied inside a
+brand-new container instead of an existing asset. One genuine scripting-interface gap surfaced along
+the way and is worth knowing: the editor's own scripting layer had no exposed function to construct
+a hierarchical tag value from a plain string — every relevant library function required an
+already-valid tag as input. The practical fix was registering the desired tag name in the authoring
+project's own local tag configuration (a tag is just a declared string; it doesn't need to match
+anything about the target game) and setting that one field through the editor's own interactive
+property picker, keeping everything else in the pipeline scripted.
+**The full recipe for genuinely new content is now proven start to finish, not theorized**: author
+the top-level container(s) fresh via the editor at a path under the reserved mod namespace; cook for
+real; if a deep reference needs to point at existing real content the authoring project doesn't
+have, convert just that one package to legacy format, retarget the reference via the same import-row
+text edit documented earlier, convert back — leaving the container's own package identity untouched
+in that pass; package and install as a normal content mod; load it through the higher-level
+resolution API (or a fallback to it) rather than the plain find/load combo. Every step of this has
+now been independently confirmed working, including real content rendering on the resulting
+character.
+
 **Conclusion, tested far past the point of reasonable doubt with the tools actually used in this
 investigation**: within this toolset (byte-level conversion/editing of already-cooked assets, no real
 editor cook pipeline of any kind), a wholly new, independent asset path cannot be made discoverable at
