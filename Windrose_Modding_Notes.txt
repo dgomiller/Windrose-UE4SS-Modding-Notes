@@ -278,12 +278,86 @@ mechanism that DOES work for skin tone relies on a small, discrete, pre-baked se
 specific materials to swap between — searching the game's own materials directly for a genuinely
 new discovery this session (an asset-registry class-enumeration technique found engine-native
 content invisible to typical offline pak scanning tools) found no equivalent discrete color-variant
-set exists for garment materials at all. Conclusion: garment color has no safe intervention point
+set exists for garment materials at all. Conclusion at that point: garment color has no safe intervention point
 anywhere in this engine, for a genuinely different and more thorough reason than assumed
 previously — it isn't merely that color is "consumed once and never re-read," it's that the ONE
 remaining theoretically-available mechanism for touching it post-build is itself not safely callable
 from this tooling in any tested form, and there's no discrete alternative to swap to as a workaround
 either.
+
+**REOPENED AND SOLVED, same session, from a sharp field observation: a character's garment color
+was noticed to be consistent per-ENTITY (the same NPC always wears roughly the same shade regardless
+of which specific outfit piece it's given), not tied to the piece or the material asset itself — a
+"color theme," not a fixed value. That observation pointed at a completely different layer from
+everything tested above, and it turned out to be right.**
+
+The real mechanism is **Custom Primitive Data (CPD)** — a standard, common UE5 feature entirely
+bypassed by every earlier attempt: a small per-INSTANCE float buffer that a material reads directly
+via a dedicated material-expression node, requiring no dynamic material instance at all. This
+explains, in one shot, both why no per-color material-instance variants exist for garments (nothing
+above ever found one) and why the dynamic-material-instance engine function was never going to be
+the right tool regardless of its own separate binding problems. Any character actor that carries a
+"custom primitive data effects" component (a common pattern for characters with cosmetic/wear
+systems) is a strong hint this mechanism is in play.
+
+The relevant engine surface sits on the base primitive-component class itself, not the composite/
+customization system: plain, ordinary, BlueprintCallable functions for writing one float
+(`SetCustomPrimitiveDataFloat(int32 index, float value)`) or four consecutive floats at once
+(`SetCustomPrimitiveDataVector4(int32 startIndex, FVector4 value)`) directly onto a mesh component.
+Critically, the vector variant writes to FOUR CONSECUTIVE FLAT FLOAT INDICES starting at the given
+index — it does NOT address independent "slots" multiplied by that index. Misunderstanding this at
+first (treating index N as an independent bucket rather than floats N..N+3) produced a confusing
+result where unrelated visual effects appeared to bleed into each other across supposedly separate
+tests — the two tests weren't actually independent, they were overlapping float ranges. Named-
+parameter variants also exist (set/get by FName rather than raw index), and a raw Lua string handed
+to one of those crashed once until it was properly converted to a real engine FName value first —
+the same general "construct the real object type, don't hand over a raw string where a name/tag
+object is expected" lesson that has come up elsewhere in this project.
+
+**The exact CPD layout for a given character system was found OFFLINE, not guessed or brute-forced**:
+extracting the equipped piece's actual shared master material asset (via the pak-conversion +
+UAssetGUI JSON-export toolchain documented earlier in this file) and reading its own internal name
+table showed the whole scheme laid out as plain designer comments — which float index corresponds to
+which purpose (a "main," "secondary," and "detail" color channel among them, plus separate indices
+for unrelated systems like a wear/dirt/damage overlay sitting adjacent to the color indices in the
+same buffer — explaining the earlier cross-contamination artifact directly: two nearby, unrelated
+effects were sharing the same float range as the color channels). This is a broadly useful technique
+in its own right: if a game's own shipped material assets retain internal editor name-table strings
+(not always the case in a fully stripped shipping build, but true here), reading them directly is far
+more reliable than guessing or bisecting blind.
+
+Confirmed live via a clean, isolated, ONE-float-at-a-time write (deliberately switching to the
+single-float function specifically to eliminate the overlap risk described above) that each of the
+three color-channel indices independently and visibly changes a different region of the garment, with
+zero effect from index to index otherwise — a real, working, per-region recolor mechanism.
+
+The value written to each index turned out to be a small integer (0 through 23 in this case) acting
+as an INDEX into a real, separate, shared color-lookup asset — a "color curve atlas" style texture
+resource containing a fixed palette of named, artist-authored swatches. This was found directly by
+exporting that lookup asset itself and reading its own metadata, which listed every palette entry by
+both index and a human-readable name. Confirmed identical across multiple different, unrelated
+character types — this is a universal, shared palette asset, not something baked differently per
+character archetype; the "color theme" difference between two different NPC types comes from which
+specific index each one is normally assigned, not from having different palettes underneath.
+
+**The finished, reusable recipe**: resolve the target garment piece's own leaf mesh component (the
+same one any other per-piece customization already operates on), then write the three color-channel
+floats in one call as a Vector4 (index, index+1, index+2, and a fourth spare/unused float) with each
+of the first three values being a real palette index for that region. This is a plain, ordinary,
+low-risk engine call — nothing like the dynamic-material-instance function that was confirmed unsafe
+in every tested form above — and was confirmed working repeatedly with zero crashes.
+
+**A further, not-yet-independently-confirmed lead worth recording**: a separate, adjacent
+customization-config asset for a DIFFERENT NPC family (not the one whose material was exported above)
+was found to reference hair pieces as well as clothing, and the master material's own comment for the
+color-channel indices explicitly labeled them "Cloth/Hair" rather than cloth-only — suggesting the
+identical CPD mechanism and index scheme very likely also governs hair color, applied to the hair
+mesh's own separate component rather than the garment's. One earlier, unrelated probe already showed
+a hair-specific customization "controller" reporting a narrower value range than the cloth ones (a
+0-7 range versus cloth's 0-23), which would point to hair drawing from its OWN, smaller, separate
+palette asset rather than the same 24-entry one — plausible, given a natural hair-color set is
+normally much smaller than a full garment-dye palette, but this specific detail remains unconfirmed
+live as of this writing and is a natural next test for anyone extending this technique to hair.
 
 ---
 
