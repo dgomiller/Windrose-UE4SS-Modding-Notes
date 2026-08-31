@@ -207,6 +207,30 @@ default. Surveying a pawn roster's customization options without paying a live-s
 possible via this route; confirm which kind of class you're dealing with before assuming the free
 CDO read will work.
 
+**A comprehensive live property probe of a real NPC settles what "building a custom NPC from
+scratch" actually requires — and the answer is reassuring.** A full reflective property walk (leaf
+class up through its ENTIRE native class hierarchy) on a real, wild NPC found the actual native
+AI-pawn base class is a SIBLING of the more commonly-guessed "the" character base class, not a
+subclass of it — confirmed by reading both classes' own generated headers directly, and by the
+correct one owning the exact native "bring this pawn to life" function this file's own basic spawn
+recipe already depends on. More importantly: almost nothing about what makes an NPC an NPC turned
+out to be compiled behavior needing replication — it's reference fields sitting on top of one
+unavoidable native base class. Behavior is exactly two references: a Blueprint AI-controller class
+reference (governs how it thinks and moves) plus a plain data-asset reference the controller reads
+for behavior tuning — both fully reusable by reference from an existing NPC, no logic to rebuild.
+Appearance is the composite-mesh system already covered above. Animation is also just a reference
+to a data-driven animation blueprint reading simple exposed state variables, not custom per-NPC
+logic. One real correction that fell out of this same probe: the composite system's own per-slot
+category tags are genuinely per-body-part (a separate tag each for head/torso/belt/hands/legs/feet,
+plus hair and several facial-hair categories) — not the single flat category tag a smaller proof of
+concept can get away with using for a one-piece test. The one real, unavoidable cost for anyone
+wanting a genuinely NEW pawn class (as opposed to reusing an existing one and only swapping its own
+composite-mesh references, which is how every override technique in this file already works):
+the native base class's own interface list is large — north of two dozen custom engine-specific
+interfaces in this investigation's case — each needing a real definition just to compile a subclass
+against it. Everything that new class would actually reference remains reusable as-is from existing
+content; only the class declaration itself needs real authoring work.
+
 ---
 
 ## 3. THE CRASH TRAPS (each cost real debugging hours)
