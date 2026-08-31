@@ -231,6 +231,26 @@ interfaces in this investigation's case — each needing a real definition just 
 against it. Everything that new class would actually reference remains reusable as-is from existing
 content; only the class declaration itself needs real authoring work.
 
+**Update — a chosen body mesh confirmed live, via a completely different mechanism than the
+archetype-preset wall above, with no new class authoring needed at all.** Rather than fighting the
+reassertion wall, swap the actor's own base body mesh component directly, post-build — the identical
+hide-then-set-mesh-then-show pattern already proven safe for swapping a single equipped piece,
+just applied to the LEADER component itself (the one every other piece leader-poses off of) instead
+of a follower — no re-binding step needed, since the leader doesn't leader-pose off itself. This
+deliberately never touches the archetype-preset property or runs anywhere near the native
+reassertion logic at all, since it happens entirely after the build (and that reassertion) has
+already finished — the wall simply doesn't apply to a component being touched after the fact.
+Confirmed live: spawned an existing NPC class with an already-proven custom outfit override in
+place, swapped its base body mesh to a different real body asset (a different ethnicity's own
+standalone mesh, found via the asset-registry class-enumeration technique below), and got a
+genuinely different, correctly-chosen body with the outfit still intact. A follow-up probe confirmed
+the skin material came through correctly too — the new mesh's own default material slot, matching
+textures and all, with no separate material step needed at all. **This means a fully custom
+character — chosen body AND chosen outfit — is achievable on an existing NPC class today, without
+needing the much bigger "author a genuinely new pawn class" undertaking described above at all** —
+that bigger project is only needed for baking the archetype in as a genuine compiled class default,
+which turns out to be a separate, optional refinement rather than a prerequisite.
+
 ---
 
 ## 3. THE CRASH TRAPS (each cost real debugging hours)
@@ -430,6 +450,22 @@ was actually wrong, so trust the formula over trial-and-error — and note a gen
 NOT need (and can actively break the count if you add) an extra placeholder out-parameter table the
 way a true out-parameter would (see §3m for that different case) — the plain script-side return of
 the call already carries it.
+
+**A generic reflective walk over every field of a returned struct is safe for one asset type and a
+real crash for another.** A reflective property walk is safe when reading a class's own fixed,
+declared property list (confirmed extensively above) — that guarantee does NOT automatically extend
+to walking every field of a STRUCT VALUE returned from a generic API, when that struct's real shape
+varies by what it's describing. An asset-registry "list every asset of this class" query returns an
+array of a generic asset-descriptor struct — a full reflective walk over every field of that struct
+worked cleanly for a plain, small custom data-asset class, and crashed the game natively partway
+through an identical query against a mesh asset class instead — almost certainly a registry-tags
+field that varies wildly in size and shape by asset type (a mesh carries far more registry tag data
+than a small data asset does). The fix: read only the specific, known-safe fields actually needed
+(the package name/path and asset name, which every such descriptor struct has, read directly rather
+than discovered by walking every field) instead of a blind generic walk. Treat "reflection is safe"
+as scoped to a class's own fixed property list, not as a blanket guarantee for every struct any API
+might hand back — especially one whose shape is documented to vary by the type of thing it
+describes.
 
 ---
 
