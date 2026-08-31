@@ -347,17 +347,33 @@ of the first three values being a real palette index for that region. This is a 
 low-risk engine call — nothing like the dynamic-material-instance function that was confirmed unsafe
 in every tested form above — and was confirmed working repeatedly with zero crashes.
 
-**A further, not-yet-independently-confirmed lead worth recording**: a separate, adjacent
-customization-config asset for a DIFFERENT NPC family (not the one whose material was exported above)
-was found to reference hair pieces as well as clothing, and the master material's own comment for the
-color-channel indices explicitly labeled them "Cloth/Hair" rather than cloth-only — suggesting the
-identical CPD mechanism and index scheme very likely also governs hair color, applied to the hair
-mesh's own separate component rather than the garment's. One earlier, unrelated probe already showed
-a hair-specific customization "controller" reporting a narrower value range than the cloth ones (a
-0-7 range versus cloth's 0-23), which would point to hair drawing from its OWN, smaller, separate
-palette asset rather than the same 24-entry one — plausible, given a natural hair-color set is
-normally much smaller than a full garment-dye palette, but this specific detail remains unconfirmed
-live as of this writing and is a natural next test for anyone extending this technique to hair.
+**Confirmed live, extending to every remaining customization category — hair, eyebrows, and eyes all
+recolor via the same or a closely related mechanism.** A separate, adjacent customization-config asset
+for a DIFFERENT NPC family was found to reference hair and eyebrow pieces as well as clothing, and the
+master material's own comment for the color-channel indices explicitly labeled them "Cloth/Hair"
+rather than cloth-only. The composite system's own body-part enum (each piece's real "which slot is
+this" identifier) confirmed which numeric value corresponds to hair versus eyebrows versus torso —
+directing the identical three-float write at a hair or eyebrow piece's own leaf component (instead of
+a garment piece) genuinely recolors it, confirmed live, same mechanism, same shared palette.
+
+Eyes are a hybrid, worth calling out separately. The material actually assigned to a plain, un-
+recolored character's eyes turned out to be a generic, shared base material — not any of a small,
+separate, discrete set of pre-made eye-color material variants that also exist in this game's asset
+catalog (confirmed as the exhaustive full list via a live, in-engine asset-registry class-enumeration
+sweep — filtering out a similar-sounding but unrelated set of animal/creature eye materials and some
+unrelated visual-effects materials that happened to share a naming substring). Since that shared base
+material doesn't itself match any particular character's rendered eye color, it turns out to ALSO be
+CPD-driven — a dedicated eye-color channel index, found in the same master-material comment map,
+written directly on the character's base body mesh component this time (since the eye material lives
+in a slot ON the base mesh, not as a separate per-piece customization entry the way garments/hair are).
+An early test at one specific value showed no visible change at all — the exact same "landed on a
+value that happens to look the same as the current one" trap the cloth system's own main color channel
+hit before a different value revealed it clearly works — a proper sweep through several other values
+confirmed real, clearly visible eye-color changes. So there are genuinely two independent, both-safe
+levers for eye appearance: a CPD-driven palette shift on the character's current eye material (mirrors
+the cloth/hair/eyebrow mechanism exactly), and a full material swap to one of the discrete pre-made
+variants (a different iris STYLE, not just a different shade of the current one) — two different axes
+of control, not redundant with each other.
 
 ---
 
