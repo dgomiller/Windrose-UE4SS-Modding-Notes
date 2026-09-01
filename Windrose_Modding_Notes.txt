@@ -251,6 +251,30 @@ needing the much bigger "author a genuinely new pawn class" undertaking describe
 that bigger project is only needed for baking the archetype in as a genuine compiled class default,
 which turns out to be a separate, optional refinement rather than a prerequisite.
 
+**A cleaner alternative to the mesh swap above was tried and closed, negative — the mesh swap
+remains the one working mechanism for choosing a body archetype.** The mesh swap works, but it's a
+post-build patch; the natural next question was whether the archetype could instead be forced
+deterministically from construction onward by constraining the composite component's own
+body-type LIST property (a plain, ordinary DataAsset — a flat array of one entry per
+family/sex combination) down to a single entry, authored offline in a real editor project. Theory:
+since the archetype-preset property itself is the confirmed-dead reassertion wall, maybe its
+selection could be starved of any other option to pick, by narrowing the pool it resolves against,
+rather than fighting the wall directly.
+
+Tested live with a custom body-type list containing exactly one entry. Result: the custom list
+itself genuinely stuck (unlike the archetype-preset property, confirmed via readback — not
+reasserted), and a live query of "available body types" honestly reflected the narrowed pool. But
+the actual resolved body type came back as the class's own native family anyway — completely
+unrelated to the custom list — and the rendered body was a generic fallback (wrong family AND
+wrong sex). **Conclusion: the archetype-preset property is what decides which family+sex gets
+requested; the body-type list is only the POOL that request gets resolved against, not the
+selector itself.** Since the narrowed pool no longer contained an entry matching what the
+archetype preset was asking for, resolution failed and the engine silently substituted a hardcoded
+fallback body instead of picking the one remaining (wrong-family) entry. This generalizes the
+existing reassertion wall rather than finding a way around it — don't re-chase this lever for
+forcing a body archetype without a genuinely new theory. The post-build mesh-swap technique above
+remains the one proven, working mechanism, and needs no custom asset authoring at all.
+
 **A reasonable follow-up question — "if a body mesh can now be swapped post-build, can color be
 re-evaluated too" — was tested exhaustively, and the original color-is-dead conclusion holds, now
 for a much clearer reason.** The body-mesh fix worked by bypassing the config-property layer
