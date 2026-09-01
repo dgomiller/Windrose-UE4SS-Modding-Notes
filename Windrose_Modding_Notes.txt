@@ -375,6 +375,51 @@ the cloth/hair/eyebrow mechanism exactly), and a full material swap to one of th
 variants (a different iris STYLE, not just a different shade of the current one) — two different axes
 of control, not redundant with each other.
 
+**Confirmed live: body-SHAPE variety (proportions within one shared body mesh) is also achievable, on
+at least one whole class of actor, using entirely existing content — no custom asset authoring
+needed.** An earlier, separate, closed investigation into a per-instance body-shape blend (a plain
+vector value feeding a Control Rig graph) had already found that the RIGHT variable genuinely differs
+between two real characters sharing an identical body mesh, but that writing it live never renders —
+the same "reports success, changes nothing visible" result as `CreateDynamicMaterialInstance`'s own
+composite-config layer, just for shape instead of color, traced to a graph binding that simply doesn't
+re-evaluate once construction has finished.
+
+That got reopened by finding the actual upstream data asset that FEEDS that blend value — a plain,
+ordinary, offline-inspectable asset (unlike the archetype-preset system, which turned out to be a
+JSON-runtime type invisible to standard pak-extraction tooling), referenced by the character's
+customization component as a simple object property, structurally identical to the OUTFIT reference
+(which is known to be safely overridable) rather than the archetype reference (which gets silently
+reset). A real, ready-made set of alternates for this asset already exists in the game's own content —
+several generic size/shape presets plus several role-specific ones for different NPC types.
+
+Decisive evidence this was real came from the live game itself, not a test: two different actor
+classes were caught, independently, both having randomly rolled the exact same shared body-mesh
+archetype, yet each referencing a DIFFERENT one of these shape-preset assets — and visibly having
+different proportions as a result, confirming the mechanism mattered before any override was ever
+attempted.
+
+Testing the override directly produced a genuinely class-family-specific result, worth recording
+precisely rather than as a blanket "it works" or "it doesn't":
+- On the SAME general class of actor the original closed investigation used (a walking, AI-controlled
+  NPC) — overriding this reference pre-spawn is retained correctly on read-back (unlike the archetype
+  reference, which reverts) but produces NO visible change at all — the identical "sticks, doesn't
+  render" signature as the original closed finding, just one layer higher up the chain.
+- On a DIFFERENT class of actor — a posed/decorative "statue" type, the same broad category the two
+  differently-shaped real actors mentioned above both belong to — the SAME override worked perfectly:
+  spawning one class while feeding it a completely different class's own shape-preset reference
+  produced an EXACT proportion match to that other class, not its own normal (randomized) default —
+  confirmed by repeating the test many times in a row with identical results every time, which rules
+  out coincidence given the base class's own appearance normally varies from spawn to spawn.
+
+Practical takeaway: this specific body-shape lever is real, low-risk (a plain object-reference write,
+nothing like the confirmed-unsafe dynamic-material-instance call), and needs no custom asset authoring
+at all — but it's currently only confirmed working for the posed/decorative actor family, not the
+walking AI-pawn family, where the identical technique was tried and had no visible effect. Anyone
+extending this to a walking-NPC use case should expect to need a different trigger for that specific
+class family (an untested next idea: pairing the same override with the same POST-build "force a
+rebuild" sequence already proven to work for outfit changes on that family, which was never actually
+tried for this specific asset — only a pre-spawn write was).
+
 ---
 
 ## 3. THE CRASH TRAPS (each cost real debugging hours)
