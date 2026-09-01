@@ -251,29 +251,107 @@ needing the much bigger "author a genuinely new pawn class" undertaking describe
 that bigger project is only needed for baking the archetype in as a genuine compiled class default,
 which turns out to be a separate, optional refinement rather than a prerequisite.
 
-**A cleaner alternative to the mesh swap above was tried and closed, negative — the mesh swap
-remains the one working mechanism for choosing a body archetype.** The mesh swap works, but it's a
-post-build patch; the natural next question was whether the archetype could instead be forced
-deterministically from construction onward by constraining the composite component's own
-body-type LIST property (a plain, ordinary DataAsset — a flat array of one entry per
-family/sex combination) down to a single entry, authored offline in a real editor project. Theory:
-since the archetype-preset property itself is the confirmed-dead reassertion wall, maybe its
-selection could be starved of any other option to pick, by narrowing the pool it resolves against,
-rather than fighting the wall directly.
+**A first attempt at forcing body-type selection through native construction (instead of a post-hoc
+mesh swap) failed — but a corrected version worked, and generalizes well across multiple NPC
+classes.** Recorded as it happened, since the failure is what led to the real technique.
 
-Tested live with a custom body-type list containing exactly one entry. Result: the custom list
-itself genuinely stuck (unlike the archetype-preset property, confirmed via readback — not
-reasserted), and a live query of "available body types" honestly reflected the narrowed pool. But
-the actual resolved body type came back as the class's own native family anyway — completely
-unrelated to the custom list — and the rendered body was a generic fallback (wrong family AND
-wrong sex). **Conclusion: the archetype-preset property is what decides which family+sex gets
-requested; the body-type list is only the POOL that request gets resolved against, not the
-selector itself.** Since the narrowed pool no longer contained an entry matching what the
-archetype preset was asking for, resolution failed and the engine silently substituted a hardcoded
-fallback body instead of picking the one remaining (wrong-family) entry. This generalizes the
-existing reassertion wall rather than finding a way around it — don't re-chase this lever for
-forcing a body archetype without a genuinely new theory. The post-build mesh-swap technique above
-remains the one proven, working mechanism, and needs no custom asset authoring at all.
+**First attempt, wrong theory, confirmed dead**: constrain the composite component's own body-type
+LIST property (a plain, ordinary DataAsset — a flat array of one entry per family/sex combination)
+down to a single NEW-family entry, authored offline in a real editor project, hoping the archetype's
+own selection could be starved of any other option to pick. Tested live: the custom list itself DID
+stick (unlike the archetype-preset property, confirmed via readback — not reasserted), and a live
+query of "available body types" honestly reflected the narrowed pool. But the resolved body type
+came back as the class's own native family anyway, completely unrelated to the custom list, and the
+rendered body fell back to a hardcoded generic (wrong family AND wrong sex). **Root cause**: the
+archetype-preset property is what decides which family+sex KEY gets requested; the body-type list is
+only the POOL that request resolves against, not the selector. A pool missing an entry for the key
+actually requested doesn't get a substitute — it fails and falls back to a hardcoded default.
+
+**The corrected technique, confirmed live and working, repeatedly, across four genuinely different
+NPC class families**: don't add a new-family entry — build an entry that KEEPS the tag the class
+already requests (so the lookup key still matches and the entry is actually consulted), but retarget
+that entry's own body-mesh reference to a DIFFERENT family's real mesh. This hijacks what "the
+class's own native key" resolves to, for one custom asset only, without touching the real shared
+asset the rest of the game still uses.
+
+Build recipe: (1) author a fresh instance of the entry class via headless editor scripting, setting
+its sex field directly and its mesh reference to a transient placeholder object (a soft reference to
+an external/unmounted asset can't be set directly from headless scripting — only an actual object of
+the matching class is accepted; a throwaway transient one works fine and serializes as a clean,
+later-editable field once cooked); (2) cook; (3) the one unavoidable manual step — the family TAG
+field can't be constructed from a plain string via any headless API found, so register the tag name
+in the project's own tag-list config, then set it once via the editor's own interactive property-
+picker on the source asset; (4) re-cook (this bakes the tag in but reverts the mesh reference back to
+the placeholder, since cooking re-derives from source — order matters, tag first, mesh retarget
+last); (5) retarget the mesh reference on the freshly-cooked file directly (a plain two-field text
+edit — package path and asset name — in a binary-asset editing tool's property grid, no JSON
+round-trip needed); (6) package and install as a sidecar content pak; (7) wrap the entry in its own
+list-container asset, which is what the actual runtime override argument points at.
+
+**Scaling this is cheap once one tagged template exists for a given source key**: the tag survives a
+plain duplicate-asset operation wholesale — so producing a second destination mesh under an
+ALREADY-tagged source needs zero further manual tag-picking, just duplicate, set a fresh placeholder
+mesh reference, cook, and one more text-field retarget. Confirmed live: one tagged template was
+duplicated into five destination meshes in a single batch script run, tag intact and verified on
+every one.
+
+**Confirmed live, working, across four genuinely different NPC source classes** (each needing its
+own one-time tagged template, since the native key varies per class, not fixed game-wide): two
+different worker-NPC classes sharing one family key despite each having its own separate archetype
+preset asset (confirming the resolved KEY is what matters, not which asset produced it); a
+completely different NPC family (a hireable specialist, not a generic laborer) resolving to a
+different key entirely, confirming the technique isn't specific to one NPC family; three
+native-MALE laborer classes sharing yet another key, which needed one extra fix — since custom
+entries are authored for one sex, a natively-male class's own archetype requests the OTHER sex, so
+forcing the desired sex in the SAME construction-time override (alongside the body-type override)
+was needed, and confirmed to actually stick when combined this way (a genuine exception to the
+general "the archetype's own sex usually wins" caution elsewhere in this document — that caution
+still applies to forcing sex ALONE; this is specifically about forcing it ALONGSIDE a matching
+body-type override in the same construction); and — the most structurally different case — a raw
+native MOB/creature class (not a "regular human" NPC at all), backed by its own entirely separate,
+dedicated body-type pool rather than the shared common one every regular NPC used, confirmed to
+retarget identically, successfully swapping her own unique native mesh for a standard human one.
+
+**Shape is NOT a tunable parameter on this class family, but it IS a free lever via source-class
+choice — worth being precise about the difference.** The shape-blend asset reference sticks
+correctly when set at construction time (unlike the archetype-preset property), but a decisive test
+proved it's never actually CONSUMED into a real shape on this class family: two different NPC
+classes were confirmed to reference the IDENTICAL shape-blend asset yet produced completely
+DIFFERENT actual shape-vector results — proof the runtime reference plays no role at all; the real
+shape value is baked into each class's own construction as a fixed default, independent of both the
+mesh currently equipped and whatever shape-blend asset is nominally referenced.
+
+That means shape can't be dialed in as a parameter — but it DOES persist reliably across a body-mesh
+retarget (confirmed on all four source classes above: each one's shape value after being retargeted
+to a different mesh family matched its own pre-retarget baseline exactly). So "which shape a custom
+NPC gets" reduces entirely to "which source class you build from" — a free, wide, but
+fixed-not-tunable pool. Sex-changing a native-male NPC carries that male class's own native shape
+value over completely unchanged — confirmed across four male classes, three of which produced
+genuinely distinct values — meaning any male NPC in the game is a usable shape source too, not just
+the naturally-female ones. Across seven classes checked, five distinct shape values were found (two
+classes shared the same fallback default).
+
+**A real clarification of an earlier armor-fit-compatibility finding, discovered as a side effect of
+this retarget technique.** An earlier investigation (see the cross-skeleton re-skinning section)
+found a specific creature-themed armor set clips badly on most human body archetypes, fitting
+cleanly only on a short allowlist. Retargeting that same creature's OWN native body mesh to an
+archetype NOT on that allowlist was expected to make her own armor clip — tested live, and it did
+not; it fit exactly as well as before. **Why**: the retarget only swaps which mesh RENDERS as the
+base body — it never touches the underlying skeleton. Composite pieces deform via the shared
+skeleton, not by binding to the base mesh's own specific geometry. Since her skeleton never changed,
+armor rigged against that skeleton keeps fitting regardless of which mesh currently paints the
+visible skin layer. This reframes the original finding correctly: it was never really about "which
+mesh is assigned" — it's about DIFFERENT NPC CLASSES having genuinely different underlying
+skeletons/proportions, even when they share an ethnicity-family name. A separate, unrelated
+mesh-authoring gap (a piece designed assuming the wearer's own skin shows through a deliberate gap)
+is unaffected by any of this and remains a distinct, still-open issue.
+
+**Practical conclusion**: a fully custom NPC on this class family reduces to three completely
+independent, freely stackable choices — source class (fixes shape), a body-type retarget
+(mesh/ethnicity, skip if the source's own native mesh is already wanted), and outfit (already
+established independent of both). None of the three are live-editable on an already-built actor —
+every one is construction-time only — so "change an existing NPC's body type" needs a full
+destroy-and-rebuild with the new choice, replaying every other override freshly, not a live edit.
 
 **A reasonable follow-up question — "if a body mesh can now be swapped post-build, can color be
 re-evaluated too" — was tested exhaustively, and the original color-is-dead conclusion holds, now
@@ -1804,42 +1882,7 @@ makes it easy to misread as "the whole feature is broken" rather than "one ident
 fires." Actor-level `==` (comparing two actor references, not components) has not shown this
 problem — treat it as a component-specific gotcha, not a blanket rule against `==`.
 
-## 17. A third-party companion mod (Windrose Mod Settings) can PROBABLY render a real slider and dropdown widget — a single unconfirmed exploratory test, not a proven recipe
-
-**This finding was never revisited or adopted into any shipping integration** — treat it as a
-promising lead worth re-testing, not a settled capability. In particular, only the widget
-RENDERING was ever confirmed; whether a value dragged on it actually round-trips (saves, and
-reads back correctly on the consuming side) was never tested.
-
-Windrose Mod Settings' own Lua-visible layer is pure generic file I/O (load/save a Lua table,
-publish a shared variable) with no type-specific validation or widget-selection logic at all —
-that logic lives entirely in its bundled native DLL, unreadable as source. A plain `type =
-"number"` setting registration (the obvious-seeming choice) rendered as a checkbox instead —
-readable/writable only as 0 or 1 — with no error or warning suggesting a different type exists.
-Found via a raw UTF-16LE string extraction of the DLL rather than more registration-schema
-guessing: the strings for this game's own native settings-screen slider/dropdown/toggle widget
-classes are directly referenced inside it, alongside the literal lowercase type strings
-`"scalar"` and `"discrete"` and a "skipped unsupported setting" diagnostic format string — real
-evidence of an actual type-dispatch branch, not just a checkbox default. Setting `type =
-"scalar"` (with guessed `min`/`max` fields — the DLL's exact expected field names are still
-unconfirmed) did render a real slider widget on screen, confirmed live — but whether a value
-moved on it saves and reads back as the right number was never checked. No integer-step/interval
-field was found anywhere in the DLL's strings — the slider appears to be a continuous float with
-no snapping option exposed through this registration schema, so a fractional value would be a
-completely normal thing for a player to land on while dragging it, if the guessed field names are
-even the real ones; round it explicitly on the consuming side if a whole number is actually
-required, rather than assuming the UI can be made to snap. **Before relying on this**: confirm
-the full round trip (drag a value, restart or re-read, confirm the same number comes back), not
-just that the widget appears on screen.
-
-**Technique worth reusing on its own**: when a third-party mod's Lua-visible source doesn't
-explain an observed behavior, and it ships a compiled DLL, extracting printable strings from
-that DLL — both plain ASCII and, easy to miss, UTF-16LE (Windows/Unreal code frequently uses
-wide strings, which a naive ASCII-only scan won't find at all) — can reveal real internal type
-names, log format strings, and referenced native class paths: genuine evidence to test against,
-rather than continuing to guess at a black box from the outside.
-
-## 18. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
+## 17. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
 
 Building an interactive "aim and pick a world object" targeting system on top of a UE4SS-exposed
 `KismetSystemLibrary` line-trace API hit two separate, easy-to-miss pitfalls — both confirmed
@@ -1879,7 +1922,7 @@ live, both worth checking for in any similar targeting system.
   outlier a narrow test pass never surfaces — it only showed up once the actual target class list
   widened past what the targeting system was originally built and tested against.
 
-## 19. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
+## 18. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
 
 ### 19a. The real structure, confirmed via direct asset-JSON exports (not a live probe this time)
 
