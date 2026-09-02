@@ -312,6 +312,44 @@ native MOB/creature class (not a "regular human" NPC at all), backed by its own 
 dedicated body-type pool rather than the shared common one every regular NPC used, confirmed to
 retarget identically, successfully swapping her own unique native mesh for a standard human one.
 
+**Extended to the OTHER sex, and a real methodology lesson learned the hard way along the way.**
+Building male-tagged entries (same recipe, sex field flipped) to pair with the female ones above
+surfaced a subtle bug worth flagging: an earlier test script had unconditionally forced the SAME sex
+on every spawn (needed for the very first native-male-source test, where the entry's tag deliberately
+mismatched the class's own native sex) — once male-tagged entries were being tested on native-male
+classes (where no forcing is needed at all, the native sex already matches), that same unconditional
+force silently broke them, reproducing the exact "no key match → hardcoded fallback" failure this
+whole technique exists to avoid. **Lesson: don't hardcode a sex override into a general-purpose test
+tool — make it an explicit, optional argument, defaulting to "use whatever the class already is."**
+A mismatch here doesn't fail loudly; it just silently falls back to a generic default, which reads
+exactly like "this source class must be unstable," wasting real effort chasing the wrong cause.
+
+**A second, more important methodology lesson: ONE probe is never enough to call a source class
+"stable."** A class initially assumed to have a fixed native family (based on a single earlier
+reading, taken under a different modification) turned out to genuinely re-roll its family per spawn
+once checked properly — confirmed only by spawning it fresh several times in a row and watching for
+skin-tone/appearance variation, the same tell that had already identified a DIFFERENT, already-known
+randomizing class family elsewhere in this document. **The real, generalized predictor turned out to
+be "does this class represent one specific, individually-named character, or a generic,
+interchangeable 'one of several' role" — not which broad NPC family/profession folder it happens to
+live in.** Several individually-named specialist NPCs (an armorer, a cook, a lookout, a laborer) were
+each checked the correct way (repeated fresh spawns, not a single read) and held rock-stable with
+zero variation, matching the same reliability already established for other named individuals
+documented elsewhere in this file — while two members of one specific generic "laborer" role class
+both independently turned out to randomize. Treat a single probe as a hypothesis, never a conclusion,
+for this specific question — and when scouting for a new stable source, a named individual is a much
+better bet than a generic, replaceable role of the same profession.
+
+**A family of structurally-different combat-mob classes was also confirmed to share one identical
+resolution key, letting a single custom entry serve as a source for several classes at once.** Three
+distinct raw creature-mob classes (different Blueprint classes entirely, each with its own combat
+role) all resolved the exact same family+sex key and the exact same native mesh — meaning one custom
+entry, built once, works as a valid source for any of them. Each still produces a genuinely different
+baked shape when used, since the shape value is fixed per-CLASS rather than per-mesh/tag (documented
+below) — so this is a real force-multiplier for building out shape variety cheaply: check whether a
+newly-found source shares a resolution key with an ALREADY-covered one before assuming a wholly new
+custom entry is needed.
+
 **Shape is NOT a tunable parameter on this class family, but it IS a free lever via source-class
 choice — worth being precise about the difference.** The shape-blend asset reference sticks
 correctly when set at construction time (unlike the archetype-preset property), but a decisive test
@@ -352,6 +390,37 @@ independent, freely stackable choices — source class (fixes shape), a body-typ
 established independent of both). None of the three are live-editable on an already-built actor —
 every one is construction-time only — so "change an existing NPC's body type" needs a full
 destroy-and-rebuild with the new choice, replaying every other override freshly, not a live edit.
+
+**A fourth, still-separate axis found the same way: SIZE, via a per-entry material lookup left
+completely unpopulated in every custom entry built so far.** The same entry class carries a second
+lookup field, structurally identical to the family/sex tag mechanism above but keyed by a SIZE tag
+(a plain Small/Medium/Large split) and pointing at a skin MATERIAL rather than a mesh. Leaving it
+empty falls back to whatever the game's own default happens to be, which is fine when that default
+already looks reasonable — but becomes glaringly obvious the moment a body mesh is retargeted onto a
+class whose fallback material is branded/distinct (e.g. a creature-themed skin material rendering on
+an otherwise-ordinary human body): the mesh geometry retargets correctly, but the skin material
+doesn't follow it at all, since it's a fully independent lookup. Confirmed directly, and independent
+of the family/sex axis entirely: repeated fresh spawns of the SAME native class, no override involved
+at all, showed the size portion of its OWN default skin material genuinely randomizing per spawn
+(Small/Medium/Large) while the family portion stayed fixed — this is not new or class-specific, it's
+the same unpinned-size behavior every class in the game has, just invisible until something else
+makes the mismatch visually obvious.
+Real structure, confirmed by extracting a genuine shipped asset of this exact type offline (a
+plain string-scan of the extracted file was enough — no property-tree decoding needed for this):
+the lookup is a small map with exactly three entries, keyed by three plain size tags (already
+present/registered from earlier tag work in a from-scratch project, unused until this point), each
+value a straightforward per-size skin material reference for that same family. **This is the correct,
+now-confirmed mechanism for real user-selectable size control** — not merely a fix for the visual
+mismatch above. Populating it follows the identical pattern already established for the family tag
+itself: since a fresh tag value still can't be constructed from a plain string via any headless API
+(confirmed again here, including trying the class's own plain constructor form directly — it routes
+to the same underlying "make a literal tag value" call already known to reject a raw string, with a
+precise underlying reason surfaced this time: the marshaling layer tries to unpack the string as a
+flat sequence of scalar values to fill the struct's fields, and the struct exposes none to fill,
+failing outright) — the fix is the same: register the tag name(s) once, pick each one via the
+editor's own interactive property picker on ONE template, and every future duplicate of that template
+carries all the picked keys forward for free, leaving only each entry's own material VALUE to be
+retargeted per new destination, the same one-field text edit as the mesh reference above.
 
 **A reasonable follow-up question — "if a body mesh can now be swapped post-build, can color be
 re-evaluated too" — was tested exhaustively, and the original color-is-dead conclusion holds, now
@@ -2231,6 +2300,40 @@ in that pass; package and install as a normal content mod; load it through the h
 resolution API (or a fallback to it) rather than the plain find/load combo. Every step of this has
 now been independently confirmed working, including real content rendering on the resulting
 character.
+
+**The whole authoring+cook sequence above can be driven entirely from the command line, not just the
+interactive editor GUI** — worth knowing since it turns what reads like a manual per-asset chore into
+something scriptable. A standard editor build's own command-line executable accepts a "run a Python
+script" mode and a "cook everything" mode as plain flags; both run headless (no window), and both
+were confirmed to work correctly for exactly this authoring pipeline — creating/duplicating/
+configuring assets, then cooking them, entirely from a script with no GUI interaction. The only two
+steps that genuinely still need the interactive GUI are the ones already called out above as such: the
+one-time tag-value property pick (no headless API constructs a fresh tag value from a string, tried
+several different call shapes, all reject it the same way), and the final soft-reference retarget on
+the cooked output (the binary-asset editor's own read side works headlessly; its write/save side does
+not, in every version tried). Running BOTH the authoring script and a full cook is materially faster
+and less error-prone than doing the same steps by hand in the GUI for anything beyond a one-off,
+particularly when producing a large batch of near-identical entries.
+
+**Two genuinely general engine/build-environment gotchas surfaced while doing this headlessly, worth
+knowing for ANY editor project, not specific to this technique.** First: a C++ editor project living
+inside a cloud-sync-managed folder (the kind that watches for changes and re-uploads automatically)
+can intermittently fail a clean/rebuild step with "unable to delete" errors on intermediate build
+subfolders — the sync client briefly locks a file it's scanning at the exact moment the build tool
+tries to delete it. This is a transient false alarm, not a real permissions or build problem — closing
+the sync client, or simply retrying the delete a few times, resolves it every time it was hit. Second:
+if only one of a project's several compiled modules gets rebuilt on its own (rather than all of them
+together in one pass), the editor can start reporting the whole project's modules as "missing or built
+with a different engine version" — each compiled module carries an internal build-identity stamp, and
+a mismatched stamp across modules is exactly what that error means, even though every individual
+module still loads and even reports itself as up to date in isolation. The fix is a genuine clean
+rebuild of every module together, not a partial one. Separately, a first clean-rebuild attempt on a
+mid-sized project can hit a build failure citing insufficient virtual memory / an undersized paging
+file while generating a precompiled header, specifically when a build accelerator is running several
+compile jobs in parallel — this is a peak-memory-pressure problem from parallelism, not a hard
+per-project limit; disabling the parallel local build accelerator for that one rebuild (trading some
+build speed for a lower peak memory footprint) resolved it immediately, with no other project or
+system setting needing to change.
 
 **Conclusion, tested far past the point of reasonable doubt with the tools actually used in this
 investigation**: within this toolset (byte-level conversion/editing of already-cooked assets, no real
