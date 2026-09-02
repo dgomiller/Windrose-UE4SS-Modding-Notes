@@ -114,7 +114,27 @@ map's key set survive a plain duplicate-asset operation wholesale. Producing N m
 under an already-configured template needs zero further manual picking — duplicate, set a fresh
 placeholder for whatever soft-reference field needs a new target value, save. This is the single
 biggest cost-reduction in the whole pipeline: pay the one-time manual-picker cost ONCE per distinct
-tag/key set needed, then batch everything else via script.
+tag/key set needed, then batch everything else via script. The same key-copying trick also works
+across UNRELATED assets, not just duplicates of one template: load any asset that already has a
+tag-typed property picked (a small "key donor" utility asset never itself shipped/cooked works
+well for this), read the real tag object back, and assign that same object onto a brand-new
+entry's property or map key — a struct value copies cleanly regardless of which asset it came
+from, so one manually-tagged donor asset can seed every future template's tag-typed fields via
+script, with the manual picker step paid exactly once, ever, for that tag vocabulary.
+
+**A real, easy-to-miss gotcha, confirmed 2026-09-02**: editing a property on an asset LOADED from
+disk (as opposed to one just created via the asset-creation call in the same script) and then
+saving does not reliably persist — `save_loaded_asset()` reports success, but the file's own
+modification time and raw bytes never change. This is a dirty-flag problem: the property-setter
+call does not reliably mark the package as modified for an already-clean, already-on-disk asset,
+so the default "only save if dirty" behavior silently skips the actual write. A freshly created
+asset never hits this (creation itself leaves it dirty, so its first save always writes), which is
+why this went unnoticed through every from-scratch template built earlier — it only surfaces once
+a script starts loading and editing an EXISTING asset in place, which the key-copying trick above
+makes newly common. **The fix**: pass the save call's own "only save if dirty" argument as false,
+forcing the write unconditionally regardless of the dirty flag. Confirmed via a direct repro and
+fix on a real asset in this project: identical edit code, silently no-writes with the default
+argument, writes correctly every time with it forced off.
 
 ---
 
