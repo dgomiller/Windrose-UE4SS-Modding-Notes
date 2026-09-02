@@ -2364,10 +2364,12 @@ untested just because it's new to the specific feature currently being built.
 
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
-There's a well-known third-party UE4SS mod, commonly called "R5 Mod Settings" (also sold on Nexus as
-"Windrose Mod Settings"), that adds a native panel under the game's own Settings > Mods screen where
-players can toggle/tune OTHER mods' settings and rebind their keys, without hand-editing config
-files. This section documents the sanctioned integration — how a third-party mod registers itself
+There's a free third-party UE4SS mod, commonly called "R5 Mod Settings" (published on Nexus as
+"Windrose Mod Settings", https://www.nexusmods.com/windrose/mods/442, by IceBoxStudio —
+https://www.nexusmods.com/profile/IceBoxStudio), that adds a native panel under the game's own
+Settings > Mods screen where players can toggle/tune OTHER mods' settings and rebind their keys,
+without hand-editing config files. This section documents the sanctioned integration — how a
+third-party mod registers itself
 with it — using that mod's own official example integration mod as the reference, plus a second,
 more advanced real-world pattern (auto-generating the registration instead of hand-writing it) drawn
 from an actual shipped mod's own integration.
