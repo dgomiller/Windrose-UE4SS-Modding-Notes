@@ -201,6 +201,30 @@ exactly this way) — and reading an unversioned, real shipped asset's actual pr
 just discovering its structure via a raw string search) needs the `.usmap` property-mapping file
 from §1 loaded into the editing tool first, or its property tree comes back unparsed.
 
+**Update, confirmed 2026-09-02: this entire step no longer needs to be manual/GUI-only.** The
+binary-editing tool referenced above is itself a graphical wrapper around a real, open-source .NET
+library published on NuGet (not on any script-language package index directly, despite how it's
+sometimes phrased — it's a .NET library, consumed from a scripting language via a CLR-hosting
+bridge). That underlying library has no such write-path limitation: calling it directly, a plain
+read-then-write round trip with no edits at all is BYTE-FOR-BYTE IDENTICAL to the original
+(confirmed both via the library's own binary-equality self-check method and an independent raw
+byte diff), and a real single-field soft-reference retarget — the exact operation this section
+needed the GUI for — reloads correctly afterward, independently cross-checked by the GUI tool's
+own JSON-export feature agreeing the write landed correctly. Tested on both a plain scalar
+soft-reference and one entry's value within a `TMap<GameplayTag, TSoftObjectPtr<...>>`-shaped
+property (selected by its already-set GameplayTag key's name — this still can't construct a fresh
+GameplayTag any more than headless Editor Python can, per §2; it only ever touches values, never
+keys). Setting this up needs only the scripting language's own CLR-hosting package, the library's
+NuGet package extracted directly (a NuGet package is just a zip file — no build toolchain restore
+needed, only the matching .NET runtime already installed), and its own transitive dependencies
+extracted the same way. **One real gotcha worth knowing**: a soft-object-path value in this
+library's object model is a STRUCT (value type) — reading a property's current value and mutating
+a nested field on it edits a throwaway copy, silently doing nothing; the fix is to construct a
+whole new struct value and assign it back to the property in one shot, never mutate through a
+chained getter. With this, the whole retarget step becomes a plain scriptable function call,
+batchable across as many entries as needed in one pass — the same as every other step in this
+pipeline, closing the one remaining manual gap besides the GameplayTag property-picker itself.
+
 ---
 
 ## 5. The one process rule that actually matters: cook once, edit once
