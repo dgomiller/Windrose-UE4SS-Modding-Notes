@@ -2366,46 +2366,108 @@ untested just because it's new to the specific feature currently being built.
 
 There's a free third-party UE4SS mod, commonly called "R5 Mod Settings" (published on Nexus as
 "Windrose Mod Settings", https://www.nexusmods.com/windrose/mods/442, by IceBoxStudio —
-https://www.nexusmods.com/profile/IceBoxStudio), that adds a native panel under the game's own
-Settings > Mods screen where players can toggle/tune OTHER mods' settings and rebind their keys,
-without hand-editing config files. This section documents the sanctioned integration — how a
-third-party mod registers itself
-with it — using that mod's own official example integration mod as the reference, plus a second,
-more advanced real-world pattern (auto-generating the registration instead of hand-writing it) drawn
-from an actual shipped mod's own integration.
+https://www.nexusmods.com/profile/IceBoxStudio; this section reflects its documented behavior as of
+implementation baseline v1.1.2), that adds a `Mods` tab to the game's own existing settings screen
+where players can toggle/tune OTHER mods' settings and rebind their keys, without hand-editing
+config files. The tab itself is owned by the mod's compiled C++ (reusing the game's own native
+setting-row, help-panel, transition, and key-binding widgets) — Lua is only a small data bridge for
+registration, persistence, and UE4SS shared variables. This section documents the sanctioned
+integration boundary on the OTHER side of that bridge — what a third-party mod itself needs to do —
+using that mod's own official example integration mod as the primary reference, confirmed and
+expanded directly by the author, plus a second, more advanced real-world pattern (auto-generating
+the registration instead of hand-writing it) drawn from an actual shipped mod's own integration.
 
-**Detecting whether it's installed**: check for the shared install's own marker file (its
-`enabled.txt`, at whatever relative root your own mod resolves paths against) rather than assuming a
-fixed path — check a couple of plausible relative roots if unsure which one your own mod's runtime
-uses. Memoize the result; every other function should no-op harmlessly if it isn't installed, since
-the whole integration is meant to be entirely optional in both directions.
+**The integration boundary is deliberately file-based, not a direct call into the manager's own
+DLL.** A registering mod writes:
+```
+./ue4ss/Mods/R5ModSettings/registrations/<ModName>.lua
+```
+— and should OVERWRITE this file on every one of its own startups (not just create it once), so its
+schema always matches whatever version of the owning mod is actually installed. The filename and the
+manifest's own `name` field should both match the registering mod's UE4SS folder name and stay
+stable after release (both are also used to derive the saved-value filename). **A registration is
+silently IGNORED unless an `enabled.txt` exists under the folder named by either the manifest
+filename or its `name` field** — this is the real mechanism that keeps a stale manifest left behind
+by an since-uninstalled mod from continuing to show up in the panel; it's not just a convention, it's
+an active check on the manager's own side.
 
-**Registering a settings page**: write a plain Lua file that `return`s a table to
-`<R5ModSettingsRoot>/registrations/<YourModName>.lua` — one file per participating mod. Fields:
-`name` (a unique, stable id — keep it identical to your own mod's UE4SS folder name to avoid
-collisions, and don't rename it after release since it's also used for the saved-value filename),
-`display` (shown on the in-game panel), `version` (a display string), `nexus_id` (optional — adds a
-real "Open Nexus Mods" button pointed at that mod page), and `settings` (an array of entries, each
-one `{key, title, description, type, default, ...}` — `type` is one of `"toggle"`, `"slider"`
-(needs `min`/`max`/`step`), `"dropdown"` (needs `options = {{value=, label=}, ...}`), or `"keybind"`).
+**Manifest fields**: `name` (see above), `display` (the player-facing name), `version` (a display
+string shown beside it), an optional `nexus_id` (adds a real action button linking to
+`https://www.nexusmods.com/windrose/mods/<nexus_id>`), and `settings` — an array of entries. The four
+PUBLIC, supported entry types are `toggle` (a plain boolean), `slider` (a number, with `min`/`max`/
+`step`), `dropdown` (a string `value` kept separate from its own visible `label`), and `keybind` (a
+table with `primary`/`secondary`). **Treat every setting's `key` as persistent data**: renaming one
+after release creates a brand-new setting from the player's perspective rather than migrating their
+already-saved value under the old name.
 
-**Reading the current value back has two layers, and the read ORDER matters**: a SAVED Lua file
-(`<root>/saved/<ModName>.lua`, same plain-table shape, where player-edited values persist across
-sessions) and UE4SS SHARED VARIABLES (`R5ModSettings/<ModName>/<key>`, published live the instant a
-player changes something in the panel — no file round-trip needed). Prefer shared variables at
-runtime since they're the most current; fall back to the saved file when shared variables haven't
-been populated yet (most likely very early in a mod's own load sequence, before load order between
-two independent mods is guaranteed one way or the other).
+A complete, compact manifest shape (the author's own canonical example):
+```
+return {
+    name = "YourModName",
+    display = "Your Mod Name",
+    version = "1.0.0",
+    nexus_id = "442",
+    settings = {
+        { key = "Enabled", title = "Enabled", description = "Turns the feature on or off.",
+          type = "toggle", default = true },
+        { key = "Multiplier", title = "Multiplier", description = "Controls the strength of the feature.",
+          type = "slider", default = 1.0, min = 0.1, max = 5.0, step = 0.1 },
+        { key = "Mode", title = "Mode", description = "Selects the behavior mode.",
+          type = "dropdown", default = "normal",
+          options = { { value = "normal", label = "Normal" }, { value = "fast", label = "Fast" } } },
+        { key = "OpenMenuKey", title = "Open Menu Key", description = "Key used by this mod.",
+          type = "keybind", default = { primary = "F8", secondary = "None" } },
+    },
+}
+```
 
-**Keybind values are a special shape**: stored and published as a `{primary = "...", secondary =
-"..."}` table (an unbound slot saves as the literal string `"None"`), using REAL, STANDARD Unreal
-engine key-name strings ("F8", "LeftShift", "ThumbMouseButton", a bare capital letter for A-Z) — the
-game's own native key-picker widget is what's actually capturing the input, so this is NOT
-necessarily the same naming convention your own mod's internal key-handling code uses. If your own
-mod has its own different internal key-name convention, a small translation table both directions is
-usually needed — build it from the engine's own well-documented, stable key-name list, and log every
-translation actually applied at runtime (a wrong/missing entry then shows up as a clear "key not
-recognized" in your own log instead of silently no-op'ing).
+**On loading a manifest, the manager creates or fills the corresponding saved file**:
+```
+./ue4ss/Mods/R5ModSettings/saved/<ModName>.lua
+```
+Missing values are filled from the manifest's own defaults; a player's EXISTING saved values are
+always preserved (a registering mod overwriting its own manifest on every startup, per above, never
+touches this file or the player's choices in it) — the one exception being a keybind saved as a
+non-table value, which gets replaced with its current table-shaped default, since a keybind must
+always be readable as a `{primary, secondary}` table. Primitive values are also published live
+through UE4SS shared variables at `R5ModSettings/<ModName>/<Key>`; a keybind's two slots are
+separate shared variables, `R5ModSettings/<ModName>/<Key>/primary` and `.../secondary` — `"None"`
+means unbound, and every other value is a real Unreal key-NAME string (`F8`, `SpaceBar`,
+`LeftShift`, `LeftMouseButton`, etc.), never an arbitrary display label.
+
+**A practical note for the registering mod's own side, not part of the manager's contract**: these
+are the engine's own standard `FKey` name strings, which is NOT necessarily the same naming
+convention your own mod's internal key-handling code already uses. If your mod has its own different
+internal key-name convention, a small translation table both directions is usually needed — build it
+from the engine's own well-documented, stable key-name list, and log every translation actually
+applied at runtime (a wrong/missing entry then shows up as a clear "key not recognized" in your own
+log instead of silently no-op'ing).
+
+**Reading the current value back has two layers, and the read ORDER matters — this is explicitly
+NOT a load-order guarantee, stated directly by the author**: UE4SS can and does start a registering
+mod BEFORE the manager has actually scanned that mod's freshly-written manifest this same session.
+Code that needs its configuration immediately at startup must therefore: begin from its own
+in-memory defaults, prefer UE4SS SHARED VARIABLES once they're actually present (published live the
+instant a player changes something in the panel, and the most current source once populated), and
+fall back to the SAVED Lua file (`<root>/saved/<ModName>.lua`) only when shared variables aren't
+populated yet. If a live update is needed and no explicit event/callback bridge is available,
+polling the shared variables every 500-1000ms is enough — do not re-read the saved Lua file every
+frame. A mod MAY also choose to proactively create/fill its own default saved file before first use
+(useful if gameplay code needs to read a value before the player has ever opened the settings
+screen) — this is an optional load-order convenience, not a prerequisite for registering at all, and
+never a reason to overwrite a value the player already saved.
+
+**Keybind UX is intentionally the game's own NATIVE interaction, not anything a registering mod
+implements itself**: clicking either the primary or secondary slot opens the game's own key-capture
+popup; a key with no conflict saves immediately; a key that conflicts with a native binding or
+another mod's own binding prompts the player for confirmation before saving; right-clicking an
+already-assigned slot clears ONLY that one slot (saving it back as `"None"`). **The manager's own
+responsibility ends at persisting and displaying the binding — actually reacting to the stored
+primary/secondary key values remains entirely the registering (gameplay) mod's own job.** The same
+ownership boundary holds in multiplayer: this settings screen is a purely LOCAL configuration UI —
+it is not authority over, nor does it synchronize, whatever gameplay feature actually consumes the
+saved value; a mod using a setting to affect shared/networked gameplay state still needs its own
+answer for that, same as it would with any other local player-side config.
 
 **A real, confirmed crash trap, worth stating plainly**: re-registering a raw keyboard hook (the
 kind a UE4SS Lua mod normally uses to bind its own keys) OUTSIDE of a mod's very first, one-time
