@@ -9,7 +9,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 `Windrose_Modding_Notes.txt` — one plain-text file, organized into numbered sections:
 
 1. Spawning an actor that actually works
-2. The composite (appearance) system — what sticks and what doesn't
+2. The composite (appearance) system — what sticks and what doesn't, a working technique for retargeting a class's body archetype/mesh (plus how to tell whether a source class is actually stable), and the real mechanism for size control
 3. THE CRASH TRAPS (each cost real debugging hours)
 4. Persisting and restoring actor state across a world load
 5. Peace / faction mechanics
@@ -28,7 +28,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 16. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName()` instead
 17. A third-party companion mod (Windrose Mod Settings) can probably render a real slider and dropdown widget — a single unconfirmed exploratory test, not a proven recipe
 18. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
-19. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
+19. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, what crashes, and how to automate the whole offline authoring/cook pipeline from the command line
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
