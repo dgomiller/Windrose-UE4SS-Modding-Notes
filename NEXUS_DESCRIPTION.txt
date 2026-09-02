@@ -1,12 +1,12 @@
 [size=5][b]Windrose UE4SS Modding Notes[/b][/size]
-[color=#D4D4D8]Durable, engine-level facts about modding [b]Windrose[/b] (Kraken Express, UE 5.6) with [b]UE4SS[/b] — both Lua scripting and compiled C++ mods. Not a tutorial and not a wrapper library — just the hard-won, confirmed-live findings that would otherwise get rediscovered by every modder independently: what crashes, what silently no-ops, what actually works, and the exact recipe for each.
+[color=#D4D4D8]Durable, engine-level facts about modding [b]Windrose[/b] (Kraken Express, UE 5.6) — two related but distinct workflows, one file each: [b]UE4SS[/b] (Lua scripting and compiled C++ mods, running against the live game) and a [b]real Unreal Editor / SDK-stub project[/b] (offline content authoring against generated header stubs, no live game process involved). Not a tutorial and not a wrapper library — just the hard-won, confirmed-live findings that would otherwise get rediscovered by every modder independently: what crashes, what silently no-ops, what actually works, and the exact recipe for each.
 
 Everything here was learned building real, shipping mods ([url=https://www.nexusmods.com/windrose/mods/519][b]Living Base Enhanced[/b][/url] and its C++ companion, LivingBaseSpawnMenu), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
 
 [b]GitHub:[/b] [url=https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes]github.com/dgomiller/Windrose-UE4SS-Modding-Notes[/url][/color]
 
 [size=4][b]What's in it[/b][/size]
-[color=#D4D4D8]One plain-text file, [b]Windrose_Modding_Notes.txt[/b], organized into numbered sections:
+[color=#D4D4D8][b]Windrose_Modding_Notes.txt[/b] — the UE4SS side (Lua + compiled C++ mods against the running game), organized into numbered sections:
 
 [list]
 [*]1. Spawning an actor that actually works
@@ -33,17 +33,20 @@ Everything here was learned building real, shipping mods ([url=https://www.nexus
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too, because a documented dead end saves someone else the same hours: stale UObject pointers, native crashes with zero pcall-catchable trace, Mercuna navigation (not the UE navmesh), why a property write can report success and never render, DXGI/D3D hooking pitfalls, and more.
 
+[b]Windrose_Unreal_SDK_Notes.txt[/b] — the OTHER side: setting up a real, standalone Unreal Editor project against generated header stubs for the game's own reflected classes, and using it to author, cook, and package genuinely new content entirely offline. Covers project setup, the headless Python authoring + cook pipeline, the two real limitations of headless scripting (constructing a GameplayTag from a string; setting a soft-object reference to an external/unmounted asset) and their workarounds, packaging/installing, several general Unreal build-environment gotchas, and two full worked examples (retargeting which body archetype/mesh a class resolves to, and the real mechanism for per-size material/skin control).
+
 Also included: [b]pakcontents.xlsx[/b] — an export of every asset name inside the game's .pak/.utoc files, one sheet per file. Useful for finding a class/asset path to spawn or reference without digging through the raw archives yourself.[/color]
 
 [size=4][b]Using it[/b][/size]
-[color=#D4D4D8]It's one file, so pick whatever fits your workflow:
+[color=#D4D4D8]Plain text files, so pick whatever fits your workflow:
 
 [list]
-[*][b]Just read it[/b] — browse the file directly on GitHub.
-[*][b]Pull it into your own project as a submodule[/b], so it updates when the repo does:
+[*][b]Just read them[/b] — browse either file directly on GitHub.
+[*][b]Pull the repo into your own project as a submodule[/b], so it updates when the repo does:
 git submodule add https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes.git external/windrose-notes
-[*][b]Clone or curl the raw file[/b] if you just want a local copy:
+[*][b]Clone or curl the raw file(s)[/b] if you just want a local copy:
 curl -O https://raw.githubusercontent.com/dgomiller/Windrose-UE4SS-Modding-Notes/main/Windrose_Modding_Notes.txt
+curl -O https://raw.githubusercontent.com/dgomiller/Windrose-UE4SS-Modding-Notes/main/Windrose_Unreal_SDK_Notes.txt
 [/list]
 
 This isn't a one-time snapshot — it gets updated whenever new findings come out of active mod development. Pull/re-fetch periodically (or watch the GitHub repo) if you want the latest.[/color]

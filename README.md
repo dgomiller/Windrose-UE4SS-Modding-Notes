@@ -1,12 +1,12 @@
 # Windrose UE4SS Modding Notes
 
-Durable, engine-level facts about modding **Windrose** (Kraken Express, UE 5.6) with **UE4SS** — both Lua scripting and compiled C++ mods. Not a tutorial and not a wrapper library — just the hard-won, confirmed-live findings that would otherwise get rediscovered by every modder independently: what crashes, what silently no-ops, what actually works, and the exact recipe for each.
+Durable, engine-level facts about modding **Windrose** (Kraken Express, UE 5.6) — two related but distinct workflows, one file each: **UE4SS** (Lua scripting and compiled C++ mods, running against the live game) and a **real Unreal Editor / SDK-stub project** (offline content authoring against generated header stubs, no live game process involved). Not a tutorial and not a wrapper library — just the hard-won, confirmed-live findings that would otherwise get rediscovered by every modder independently: what crashes, what silently no-ops, what actually works, and the exact recipe for each.
 
 Everything here was learned building real, shipping mods (**[Living Base Enhanced](https://github.com/dgomiller/Living-Base-Enhanced-Windrose)** and its C++ companion, **[LivingBaseSpawnMenu](https://github.com/dgomiller/Living-Base-Spawn-Menu-Windrose)**), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
 
 ## What's in it
 
-`Windrose_Modding_Notes.txt` — one plain-text file, organized into numbered sections:
+`Windrose_Modding_Notes.txt` — the UE4SS side (Lua + compiled C++ mods against the running game), organized into numbered sections:
 
 1. Spawning an actor that actually works
 2. The composite (appearance) system — what sticks and what doesn't, a working technique for retargeting a class's body archetype/mesh (plus how to tell whether a source class is actually stable), and the real mechanism for size control
@@ -31,20 +31,23 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
+`Windrose_Unreal_SDK_Notes.txt` — the OTHER side: setting up a real, standalone Unreal Editor project against generated header stubs for the game's own reflected classes, and using it to author, cook, and package genuinely new content entirely offline. Covers project setup, the headless Python authoring + cook pipeline, the two real limitations of headless scripting (constructing a `GameplayTag` from a string; setting a soft-object reference to an external/unmounted asset) and their workarounds, packaging/installing, several general Unreal build-environment gotchas, and two full worked examples (retargeting which body archetype/mesh a class resolves to, and the real mechanism for per-size material/skin control). Cross-references `Windrose_Modding_Notes.txt` where the two overlap rather than duplicating content.
+
 `pakcontents.xlsx` — an export of every asset name inside the game's `.pak`/`.utoc` files, one sheet per file. Useful for finding a class/asset path to spawn or reference without digging through the raw archives yourself.
 
 ## Using it
 
-It's one file, so pick whatever fits your workflow:
+Plain text files, so pick whatever fits your workflow:
 
-- **Just read it** — browse `Windrose_Modding_Notes.txt` directly here on GitHub.
-- **Pull it into your own project as a submodule**, so it updates when this repo does:
+- **Just read them** — browse either file directly here on GitHub.
+- **Pull the repo into your own project as a submodule**, so it updates when this repo does:
   ```
   git submodule add https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes.git external/windrose-notes
   ```
-- **Clone or `curl` the raw file** if you just want a local copy:
+- **Clone or `curl` the raw file(s)** if you just want a local copy:
   ```
   curl -O https://raw.githubusercontent.com/dgomiller/Windrose-UE4SS-Modding-Notes/main/Windrose_Modding_Notes.txt
+  curl -O https://raw.githubusercontent.com/dgomiller/Windrose-UE4SS-Modding-Notes/main/Windrose_Unreal_SDK_Notes.txt
   ```
 
 ## Staying up to date

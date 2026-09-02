@@ -1,0 +1,340 @@
+# Windrose Unreal SDK Modding — A Companion to the UE4SS Notes
+
+Durable, engine-level facts about a DIFFERENT workflow than the rest of this repo: setting up a
+real, standalone Unreal Editor project against generated header stubs for Windrose's own reflected
+native classes, and using that project to author, cook, and package genuinely new content offline —
+no UE4SS, no Lua, no live game process involved at all until the finished result is installed as a
+normal content-mod pak. Same spirit as `Windrose_Modding_Notes.txt` (confirmed-live findings, not
+theory), same generalization rule (a specific asset/class name here is a worked example of a
+technique, not a project-specific detail) — kept as a separate file because the audience and
+tooling are genuinely different: this needs a real Unreal Engine install and Visual Studio, not
+just a text editor and the running game.
+
+**Why this exists at all**: some things simply cannot be done from a running game via UE4SS/Lua, no
+matter how much reflection surface is available — specifically, authoring a genuinely NEW asset
+instance of the game's own custom data classes, or safely constructing certain struct-typed values
+(a `GameplayTag` in particular) from scratch. A real Editor, building against the game's own
+reflected class layout, can do both — because it goes through the engine's own first-party
+object-authoring and cook pipeline instead of reflecting into an already-running, already-committed
+process.
+
+---
+
+## 1. Setting up the project
+
+**Prerequisite**: an Unreal Engine install matching the target game's own engine version exactly
+(check the game's own crash logs or `.uproject` file conventions for the exact version string —
+Windrose is UE 5.6). A mismatched minor version can fail to load the generated stubs correctly.
+
+**Generating the header stubs**: a standard UE4SS build ships its own SDK/header-stub generator
+built in — no external tool required. It inspects the RUNNING game's own reflection data and emits
+C++ header files for every class the game exposes, including the game's own custom, proprietary
+data classes (not just engine built-ins). Two related outputs exist and are both useful:
+`GenerateUHTCompatibleHeaders()` (headers meant to actually compile against, the ones a real project
+needs) and a raw `.usmap` property-mapping file (useful separately for tools like UAssetGUI/FModel
+to decode unversioned, already-cooked assets — see §4 below).
+
+**The project itself**: a minimal, otherwise-empty Unreal Editor project. Give the module that will
+hold the game's own reflected classes the SAME MODULE NAME the generated stubs use internally (e.g.
+if the game's own gameplay module is named `R5`, name your project's corresponding module `R5` too)
+— this makes the resulting class identity match the real game's own (`/Script/YourModule.YourClass`),
+which matters later when packaging content that needs to resolve correctly once installed alongside
+the real game. A second, smaller stub module for just the enums/business-logic types referenced by
+the classes you actually need is often enough — you don't need to import the ENTIRE reflected
+surface, just what your own new assets will reference.
+
+**The one real build gotcha**: the generator's own `// CROSS-MODULE INCLUDE V2: ...` header comments
+are INFORMATIONAL, not real `#include` directives. If a generated header references a type from
+another module (an enum, a struct) via one of these comments, the actual `#include` for that type's
+real header has to be added BY HAND, or the build fails with that type undeclared. This is the most
+common first-build failure with this approach — check for it before assuming something deeper is
+wrong.
+
+**Simplifying a dependency chain**: a class with its own deep web of dependencies doesn't need to be
+stubbed in full fidelity if you're only ever going to hold a REFERENCE to it, not construct one
+directly — a simplified stub (just enough fields to compile, dropping fields you'll never touch) is
+fine for that case. Reserve full-fidelity stubs for the classes you'll actually construct/edit
+instances of.
+
+**Confirming it worked**: open the project in a real Editor and check the Content Browser's own
+"create new asset" flow (right-click → Miscellaneous → Data Asset, or similar) — the game's own
+custom data classes should show up as pickable types right alongside native engine ones. If they do,
+the whole stub chain is correctly wired.
+
+---
+
+## 2. Authoring content headlessly
+
+Everything below can be driven from the command line via the Editor's own command-line executable,
+not just the interactive GUI — a standard build ships one, and it accepts a "run a Python script"
+mode and a "cook everything" mode as plain flags. Both run fully headless (no window) and both work
+correctly for this whole pipeline. This turns what reads like a manual per-asset chore into
+something scriptable — worth doing the moment you're producing more than a one-off asset.
+
+One real environment caveat before running anything headless: if a SECOND Editor process (an
+interactive GUI session) already has the same project open, running a headless instance
+concurrently risks file-lock conflicts on the project's asset-registry cache and intermediate
+files. Close any open interactive session first.
+
+**Creating/duplicating an asset**: the Editor's Python scripting API can create a new instance of
+any of the stubbed data classes, set plain scalar/enum properties directly, and save it — all
+headlessly, no GUI needed. Duplicating an EXISTING asset (rather than creating fresh each time) is
+often the cheaper path when producing many similar entries — see §3's own scaling note.
+
+**Two genuine, confirmed limitations of headless Python, both needing a manual workaround**:
+
+1. **A `GameplayTag`-typed property cannot be constructed from a plain string, under any call shape
+   tried.** Every plausible approach fails the same underlying way: a tag-library "make a literal
+   tag" function requires an ALREADY-VALID tag as its own input (a chicken-and-egg problem for a
+   from-scratch value); the tag struct's own plain constructor (`TheType(value="a.tag.string")`)
+   routes internally to that exact same library call and fails identically, with a precise
+   underlying reason worth knowing: the property-marshaling layer tries to unpack the string as a
+   flat SEQUENCE of scalar values to fill the struct's own fields, and the struct exposes none to
+   fill that way, so it fails outright. **The fix**: register the desired tag name(s) in the
+   project's own local tag-list config file (a tag is just a declared string — it doesn't need to
+   correspond to anything in the target game, it only needs to already exist as a real value once
+   the property picker needs one), then set the property ONCE via the Editor's own interactive
+   property-picker widget. This is the one genuinely unavoidable manual/GUI-only step in the whole
+   pipeline. It applies identically whether the tag is a plain scalar property OR the KEY of a
+   `TMap` entry — a map with a tag-typed key has exactly the same limitation, just once per key
+   instead of once per property.
+
+2. **A soft-object-reference property (a `TSoftObjectPtr<T>`) cannot be set to an external,
+   unmounted asset path directly from headless scripting.** Passing a plain string, a constructed
+   path-object, or even a correctly-LOADED object of the WRONG class all fail with a
+   type-conversion error — only an actual object of the exact expected class is accepted, and this
+   is checked by class, not by whether the object is "real." **The fix**: construct a throwaway
+   TRANSIENT object of the correct class (e.g. a bare, empty instance of the target mesh/material
+   type) and assign that — it's accepted because the class check passes, and it serializes cleanly
+   as an ordinary, later-editable soft-reference field once cooked (see §4 for how it gets
+   retargeted to the REAL asset afterward).
+
+**Scaling once one correctly-configured template exists**: both a picked tag value AND a populated
+map's key set survive a plain duplicate-asset operation wholesale. Producing N more similar entries
+under an already-configured template needs zero further manual picking — duplicate, set a fresh
+placeholder for whatever soft-reference field needs a new target value, save. This is the single
+biggest cost-reduction in the whole pipeline: pay the one-time manual-picker cost ONCE per distinct
+tag/key set needed, then batch everything else via script.
+
+---
+
+## 3. Cooking
+
+Cook via the same headless command-line executable, "cook everything" mode, targeting the platform
+you need. A cook regenerates the project's ENTIRE output fresh from the source assets in the
+project's own content folder every single time it runs — this has one critical, easy-to-miss
+consequence covered in §5 below.
+
+**A real, confirmed build-environment gotcha, general to any Unreal project, not specific to this
+workflow**: a first cook/rebuild attempt on a mid-sized project can fail with an out-of-virtual-
+memory error while generating a precompiled header, specifically when a parallel build accelerator
+is running several compile jobs at once — this is peak-memory-pressure from parallelism, not a hard
+per-project limit. Disabling the parallel local build accelerator for that one rebuild (a build-tool
+flag, trading some speed for a lower peak memory footprint) resolves it immediately, with no other
+system setting needing to change.
+
+**A second, unrelated build gotcha**: a C++ editor project living inside a cloud-sync-managed
+folder (the kind that watches for changes and re-uploads automatically) can intermittently fail a
+clean/rebuild step with "unable to delete" errors on intermediate build subfolders — the sync
+client is briefly holding a lock on a file it's scanning at the exact moment the build tool tries to
+delete it. This is a transient false alarm, not a real permissions problem; closing the sync client
+for the rebuild, or simply retrying the delete a few times, resolves it every time.
+
+**A third, more subtle one**: if only ONE of a project's several compiled modules gets rebuilt on
+its own (rather than all of them together in a single pass — easy to do by accident with an
+incremental/partial build), the Editor can start reporting the WHOLE project's modules as "missing
+or built with a different engine version" on next launch, even though every individual module still
+loads and reports itself as up to date in isolation. Each compiled module carries its own internal
+build-identity stamp; a mismatch across modules is exactly what that error means. The fix is a
+genuine clean rebuild of every module together (clear the compiled binaries folder and each
+affected module's own intermediate-build subfolder, then rebuild as one pass) — not a partial one.
+
+---
+
+## 4. Retargeting a soft reference to the real target asset
+
+The placeholder object from §2 needs to become a reference to the REAL target asset before this is
+useful. This step operates on the COOKED output, not the source asset in the project — and it needs
+a binary-asset editing tool capable of opening a cooked Unreal asset directly (one exists, free,
+widely used in the UE modding community; any tool with equivalent capability works the same way).
+
+**A real tooling limitation worth knowing up front**: this class of tool commonly ships a
+command-line mode alongside its GUI, advertised for round-tripping an asset to/from JSON. In this
+project's own testing, the JSON-EXPORT direction worked reliably; the JSON-IMPORT (write-back)
+direction produced no output and no error across every variant tried, on every asset type tested.
+Treat the write path as unreliable until proven otherwise on your own setup, and default to the
+tool's interactive GUI for any actual edit — its Export Data grid (for a plain, still-versioned/
+tagged asset, which is what a fresh cook from your own project produces) is a reliable, simple
+two-field text edit: change the soft reference's package-path field and its object-name field to
+the real target, save. No manual entry into any internal name-table is needed — typing a brand-new
+string directly into an editable name field auto-registers it in the file's own name table on save.
+
+**Reading an ALREADY-SHIPPED, real game asset (as opposed to your own freshly-cooked one) needs one
+extra step first**: the game's own shipped assets are normally packaged in a modern container
+format (IoStore/Zen) that this class of editing tool can't open directly — it'll refuse with an
+explicit error naming the problem. A separate, purpose-built conversion tool (again, a real one
+exists specifically for this — same modding-community ecosystem) can convert a container's
+contents to the older, directly-loadable legacy format first; from there the same asset-editing
+tool opens it normally. This is also how you'd inspect a real shipped asset's structure to learn its
+correct shape before authoring your own equivalent (see §7 and §8 below, both of which were done
+exactly this way) — and reading an unversioned, real shipped asset's actual property VALUES (not
+just discovering its structure via a raw string search) needs the `.usmap` property-mapping file
+from §1 loaded into the editing tool first, or its property tree comes back unparsed.
+
+---
+
+## 5. The one process rule that actually matters: cook once, edit once
+
+**A real, costly mistake made and worth stating as a flat rule**: re-cooking (§3) after any
+soft-reference retarget (§4) has already been done WIPES THE RETARGET BACK TO THE PLACEHOLDER —
+for every entry the cook touches, not just the one you meant to fix. This is because a cook always
+regenerates fresh from the source asset in the project, which the editing-tool step in §4 never
+touches (it only edits the separate COOKED copy). Fixing one broken entry among many by re-cooking
+the whole batch silently discards every OTHER already-correct retarget in that same batch — a real
+mistake made once in this project's own history, costing a full batch of otherwise-correct manual
+edits.
+
+**The rule**: cook exactly once, before any retargeting begins on a given batch of assets. If one
+entry in that batch later needs fixing, fix its already-cooked file directly (or, if starting that
+one entry over is genuinely necessary, reset just its OWN placeholder on the source asset and
+redo its own retarget after confirming no further cook is needed) — never re-cook the whole batch
+to fix one entry.
+
+---
+
+## 6. Verification: script it, don't eyeball it
+
+A small check — does the freshly-retargeted cooked file actually contain the expected target
+string, and NOT any OTHER family/variant's string that might indicate a copy-paste mix-up — run
+over every entry in a batch before packaging/installing caught two real mistakes in this project's
+own history that a visual spot-check missed: one entry that silently never got its own edit saved at
+all (still showing only the placeholder), and one entry showing a stray reference to the WRONG
+target alongside the correct one (consistent with an edit meant for a different, adjacent file in
+the editing tool's own multi-tab interface landing in the wrong tab). Worth doing this same
+check on any N-entry batch before considering it done — a quick, cheap script beats trusting "I did
+all of them."
+
+---
+
+## 7. Worked example: retargeting which body mesh a class resolves to
+
+**The problem this solves**: a composite/appearance system where a class's own construction-time
+selection logic decides which body archetype (ethnicity/family) and mesh get used, and that
+selection logic re-asserts itself every time the actor is actually built — a plain pre-build
+property OVERRIDE of the SELECTOR gets silently discarded. (This exact reassertion behavior, and
+why a naive override attempt fails, is covered in more general terms in `Windrose_Modding_Notes.txt`
+§2 — this section is the specific, confirmed-working WORKAROUND, built via this SDK-stub approach.)
+
+**The insight**: don't fight the selector — the selector only decides which KEY (family+sex) gets
+requested; a separate, ordinary data asset is just the POOL that key gets looked up against. Build a
+custom pool asset that KEEPS the exact key the class already requests (so the lookup still succeeds
+and your custom entry is the one consulted), but retarget that one entry's own mesh reference to a
+DIFFERENT family's real mesh. This hijacks what "the class's own native key" resolves to, for this
+one custom asset only — the real, shared pool every other actor in the game still uses is never
+touched.
+
+**Recipe, step by step**, all following the general steps above:
+1. Find the class's own native key (its currently-resolved family tag and sex) via a live probe of
+   an actual spawned instance — don't guess this from folder naming, some assumptions here have
+   been confirmed wrong empirically more than once.
+2. Author a fresh instance of the pool-entry class (§2): set the sex field directly, leave the
+   family tag at default for now, set the mesh reference to a transient placeholder.
+3. Cook (§3).
+4. The one manual step: register the family tag name, then set it via the property-picker on the
+   SOURCE asset (§2's tag limitation).
+5. Cook again — this is the LAST cook for this asset, per §5's rule; every step after this is
+   editing the cooked output only.
+6. Retarget the mesh reference on the cooked output to the real destination mesh (§4).
+7. Wrap the entry in its own list-container asset (whatever your class's actual runtime override
+   argument expects — often a small wrapper holding an array of one or more pool entries).
+8. Package (see §9) and install as a sidecar content-mod pak; test by spawning the source class
+   with the override applied.
+
+**Scaling this out** (§2's own scaling note applies directly): once one template is correctly
+tagged for a given key, duplicating it into many destination meshes needs zero further manual
+tag-picking — just duplicate, fresh placeholder, one retarget each. A batch of 25+ destination
+combinations across several source classes was built this way in a single scripted pass, needing
+manual GUI work only for the handful of genuinely NEW tag values and the per-entry mesh retargets.
+
+**A real methodology lesson from scaling this to many source classes**: checking whether a
+candidate source class's own native key is actually STABLE (doesn't change on its own between
+spawns) needs REPEATED fresh spawns, not a single probe — a class assumed stable from one earlier
+reading (taken under different circumstances) turned out to genuinely randomize once checked
+properly. The practical, reliable predictor that emerged: a class representing ONE specific,
+individually-named character/NPC is a much safer bet than a class representing a generic,
+interchangeable "one of several" role of the same kind, even within the identical broader
+profession/category — the individually-named ones held stable every time; the generic
+interchangeable ones didn't.
+
+**A related scaling win**: several structurally different classes (different Blueprint classes
+entirely, no relation to each other in the class hierarchy) were found to resolve the exact
+identical key — meaning ONE custom pool entry, built once, can serve as a valid override source for
+ALL of them. Since a class's own baked-in shape/proportion value (a separate, non-overridable
+per-class default — see `Windrose_Modding_Notes.txt` §2's own shape/`BodyMorph` findings) is fixed
+per-CLASS rather than per-mesh/tag, each of these classes still produces a genuinely different
+result even off the identical shared entry — a real force-multiplier when scouting for shape
+variety: check whether a newly-found candidate shares a resolution key with an already-covered one
+before assuming a wholly new entry is needed.
+
+---
+
+## 8. Worked example: real per-size material control (and why it's needed at all)
+
+**The gap this closes**: the technique in §7 only retargets the body MESH. A separate, independent
+lookup on the same pool-entry class controls the SKIN MATERIAL, keyed by a plain size split
+(commonly a Small/Medium/Large three-way, though the exact granularity is engine/game-specific) —
+and every entry built via §7 above leaves it completely empty. Left empty, it falls back to
+whatever the engine's own default happens to be, which is often unnoticeable (a default that
+happens to look reasonable) but becomes glaringly obvious the moment the mesh itself has been
+retargeted to a different family (e.g. an original creature-themed skin material rendering on an
+otherwise-ordinary human body mesh).
+
+**A real, confirmed randomization finding, independent of the family/mesh selection entirely**:
+the SIZE portion of a class's own default skin material genuinely randomizes per spawn on its own —
+confirmed directly by spawning the identical native class fresh several times with no override
+involved at all and observing the material name's size token change each time, while the family
+portion stayed fixed. This is not specific to any one class; it's the same unpinned-size behavior
+every class with this system has. This is the actual, intended purpose of the lookup discussed
+here: it's the real mechanism for PINNING (or deliberately offering as a real user-facing choice)
+which size variant gets used, rather than leaving it to randomize.
+
+**Real structure, confirmed by extracting a genuine shipped asset of this type** (§4's "reading a
+real shipped asset" path — a plain string-scan of the extracted file was sufficient, no full
+property-tree decode needed for this particular question): the lookup is a small map with one entry
+per size variant, each keyed by a plain size tag and pointing at a per-size skin-material reference
+for that same family — structurally IDENTICAL to the family-tag mechanism in §7, just a different
+tag vocabulary and a material reference instead of a mesh reference.
+
+**Populating it** follows §7's own recipe exactly, since it's the same underlying mechanism: a
+map with a tag-typed key needs the same one-time manual property-picker step per key value (§2's
+tag limitation applies to a map key exactly as it does to a plain scalar field), done once on a
+template; every future duplicate of that template carries the populated key set forward for free,
+leaving only each entry's own material VALUE to retarget per new destination — the identical
+transient-placeholder-then-retarget dance as the mesh reference in §7, just applied to a
+material-typed reference instead of a mesh-typed one.
+
+---
+
+## 9. Packaging and installing
+
+Once a cooked, fully-retargeted set of assets is ready, package it into a modern container format
+(IoStore/Zen — the same format the game's own real content ships in) using a purpose-built
+conversion tool from the same modding-community ecosystem mentioned in §4. The staging folder
+layout should mirror the game's own mount-point convention for mod content (check an
+already-working example mod's own container, if one is available, for the exact expected root
+mount point). Install the resulting container files as a sidecar pak in the game's own designated
+mod-paks folder, alongside its normal load order.
+
+**A real, confirmed constraint**: a new pak install of this kind needs a FULL GAME RESTART to take
+effect — hot-reloading content paks mid-session is not supported the way a pure-Lua/UE4SS-side
+script change might be.
+
+**A separate, much bigger and still-unresolved question — whether this same offline toolchain can
+make a WHOLLY NEW, independent asset path (not overriding an existing one) discoverable at runtime
+at all** — is covered in depth in `Windrose_Modding_Notes.txt` §18 (search for "the new-path wall"):
+short version, a real Editor cook of the kind described in this whole document CAN break through
+that wall, provided the new content is packaged under the specific reserved namespace convention
+the engine's own third-party "mod loader" component already watches — the full investigation,
+including several genuine dead ends and the eventual working recipe, is documented there rather
+than duplicated here, since it applies to Unreal/UE4SS modding generally, not specifically to the
+SDK-stub-project workflow this document covers.
