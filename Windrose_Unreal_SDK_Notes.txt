@@ -338,3 +338,16 @@ the engine's own third-party "mod loader" component already watches — the full
 including several genuine dead ends and the eventual working recipe, is documented there rather
 than duplicated here, since it applies to Unreal/UE4SS modding generally, not specifically to the
 SDK-stub-project workflow this document covers.
+
+**A packaging shortcut evaluated and rejected**: Nexus Mods' own official "Nexus Mods Author Tools"
+Editor plugin (`github.com/Nexus-Mods/NexusModsAuthorToolsUE`) looked like a possible replacement for
+this whole cook-and-package leg. It installs clean into an SDK-stub project like this one (Editor
+module, only needs `EditorScriptingUtilities`), and reading its actual packaging source confirmed it
+cooks and packages via the same plain `UnrealEditor-Cmd -run=Cook` and stock `UnrealPak.exe
+-CreateGlobalContainer` calls this document already describes — no hidden converter, and a hand-built
+IoStore container using its exact command line loaded fine structurally against this project's own
+cooked output, so a vanilla-UnrealPak-built container is not inherently incompatible with this game's
+format. It was rejected anyway: its packaging step has no Python or commandlet hook at all, so using
+it means manually clicking through Editor dialogs for every template, in place of this document's
+scriptable command-line packaging step — trading a fast, automatable step for a slower manual one
+with no actual reduction in effort. Worth knowing about so it doesn't get re-evaluated from scratch.
