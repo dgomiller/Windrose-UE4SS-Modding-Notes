@@ -169,6 +169,20 @@ build-identity stamp; a mismatch across modules is exactly what that error means
 genuine clean rebuild of every module together (clear the compiled binaries folder and each
 affected module's own intermediate-build subfolder, then rebuild as one pass) — not a partial one.
 
+**A fourth gotcha, specific to this cook step**: a bare "cook everything" invocation with no
+explicit package list at all does NOT actually cook everything under your own mod content folder —
+it only cooks whatever the project's default packaging settings consider reachable (roughly: assets
+referenced from a default/always-cook map or explicitly listed "directories to cook"), which a
+`/Game/Mods/...`-style folder full of standalone DataAssets with no map referencing them typically
+is NOT. Confirmed directly: a bare cook reported success and cooked several hundred generic Engine
+default packages, while silently producing ZERO of the actual target files — no error, no warning,
+nothing to indicate the real content was skipped. Passing an explicit package list (the same
+mechanism §7/§8's own recipes already use for a single asset) cooks the real target content
+correctly; the fix scales to as many packages as needed in one call, joined with `+` in the same
+list argument. **The one universal lesson**: after any cook, verify the cook's OWN OUTPUT FILES
+exist on disk for the specific packages you needed — a "Success"/"Done!" exit status alone does not
+mean your content was actually cooked.
+
 ---
 
 ## 4. Retargeting a soft reference to the real target asset
