@@ -2361,3 +2361,80 @@ Rebinding a swapped-in skeletal mesh component to share the actor's own skeleton
 technique from earlier per-slot mesh-swap work (documented earlier in this file) before this
 investigation started. Worth checking a project's own prior notes before treating a call as
 untested just because it's new to the specific feature currently being built.
+
+## 19. Integrating with the "R5 Mod Settings" companion mod
+
+There's a well-known third-party UE4SS mod, commonly called "R5 Mod Settings" (also sold on Nexus as
+"Windrose Mod Settings"), that adds a native panel under the game's own Settings > Mods screen where
+players can toggle/tune OTHER mods' settings and rebind their keys, without hand-editing config
+files. This section documents the sanctioned integration — how a third-party mod registers itself
+with it — using that mod's own official example integration mod as the reference, plus a second,
+more advanced real-world pattern (auto-generating the registration instead of hand-writing it) drawn
+from an actual shipped mod's own integration.
+
+**Detecting whether it's installed**: check for the shared install's own marker file (its
+`enabled.txt`, at whatever relative root your own mod resolves paths against) rather than assuming a
+fixed path — check a couple of plausible relative roots if unsure which one your own mod's runtime
+uses. Memoize the result; every other function should no-op harmlessly if it isn't installed, since
+the whole integration is meant to be entirely optional in both directions.
+
+**Registering a settings page**: write a plain Lua file that `return`s a table to
+`<R5ModSettingsRoot>/registrations/<YourModName>.lua` — one file per participating mod. Fields:
+`name` (a unique, stable id — keep it identical to your own mod's UE4SS folder name to avoid
+collisions, and don't rename it after release since it's also used for the saved-value filename),
+`display` (shown on the in-game panel), `version` (a display string), `nexus_id` (optional — adds a
+real "Open Nexus Mods" button pointed at that mod page), and `settings` (an array of entries, each
+one `{key, title, description, type, default, ...}` — `type` is one of `"toggle"`, `"slider"`
+(needs `min`/`max`/`step`), `"dropdown"` (needs `options = {{value=, label=}, ...}`), or `"keybind"`).
+
+**Reading the current value back has two layers, and the read ORDER matters**: a SAVED Lua file
+(`<root>/saved/<ModName>.lua`, same plain-table shape, where player-edited values persist across
+sessions) and UE4SS SHARED VARIABLES (`R5ModSettings/<ModName>/<key>`, published live the instant a
+player changes something in the panel — no file round-trip needed). Prefer shared variables at
+runtime since they're the most current; fall back to the saved file when shared variables haven't
+been populated yet (most likely very early in a mod's own load sequence, before load order between
+two independent mods is guaranteed one way or the other).
+
+**Keybind values are a special shape**: stored and published as a `{primary = "...", secondary =
+"..."}` table (an unbound slot saves as the literal string `"None"`), using REAL, STANDARD Unreal
+engine key-name strings ("F8", "LeftShift", "ThumbMouseButton", a bare capital letter for A-Z) — the
+game's own native key-picker widget is what's actually capturing the input, so this is NOT
+necessarily the same naming convention your own mod's internal key-handling code uses. If your own
+mod has its own different internal key-name convention, a small translation table both directions is
+usually needed — build it from the engine's own well-documented, stable key-name list, and log every
+translation actually applied at runtime (a wrong/missing entry then shows up as a clear "key not
+recognized" in your own log instead of silently no-op'ing).
+
+**A real, confirmed crash trap, worth stating plainly**: re-registering a raw keyboard hook (the
+kind a UE4SS Lua mod normally uses to bind its own keys) OUTSIDE of a mod's very first, one-time
+initial load pass reliably crashed the game in testing — confirmed reproducible, even though
+registering that exact same hook AT initial load works fine every time. **Practical rule**: read a
+keybind value from R5ModSettings once, at your own mod's load time, and apply it to your own
+key-hook registration THEN — don't try to live-rebind an already-registered raw key hook mid-session
+in response to a later settings change. A toggle-type setting doesn't have this problem (nothing
+about flipping a boolean re-registers a native hook) and CAN be safely polled and applied live —
+every ~500-1000ms is plenty, no need to check every frame. The practical trade-off this leads to: a
+mod can safely offer live-updating toggles through the panel, but should honestly tell the player a
+keybind change needs a restart to take effect, rather than attempting a live re-bind that risks this
+crash.
+
+**A real, separate bug in the settings panel itself, unrelated to anything a third-party mod does,
+worth knowing about rather than chasing as your own bug**: moving the mouse cursor QUICKLY over the
+panel's own settings list has been observed to crash the game — confirmed independent of row count,
+entry type, or which registered mod owns the affected row (tested down to as few as 10 rows, still
+reproduced). If a settings-panel crash report comes in, check for this specific repro step (fast
+cursor movement over the list) before assuming your own registration/manifest content is at fault.
+
+**A more scalable pattern than hand-writing the manifest literal**: rather than maintaining the
+`settings` array as a literal Lua table duplicated separately from your own mod's actual settings
+definitions, generate it as OUTPUT from whatever your mod already uses as its own single source of
+truth for its keybinds/toggles (a plain array of definition tables is enough) — this keeps the
+registration automatically in sync with your mod's real settings instead of two hand-maintained
+copies drifting apart. One real, non-obvious bug to watch for when writing a generic Lua-table
+serializer for this purpose: a naive serializer that sorts every table's keys as STRINGS for
+deterministic/readable output is fine for a settings entry's own named fields (`key`/`title`/
+`description`/...), but silently scrambles the display order of the numerically-indexed `settings`
+ARRAY itself the moment it grows past 9 entries — `"10"` sorts before `"2"` as a string — making the
+in-panel row order look effectively random rather than the order you actually built it in. Sort
+numeric array indices numerically and keep string field names sorted alphabetically, as two separate
+passes, not one generic string-sort over everything.
