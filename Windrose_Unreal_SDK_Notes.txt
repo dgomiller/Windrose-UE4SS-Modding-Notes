@@ -333,6 +333,25 @@ leaving only each entry's own material VALUE to retarget per new destination —
 transient-placeholder-then-retarget dance as the mesh reference in §7, just applied to a
 material-typed reference instead of a mesh-typed one.
 
+**Confirmed end-to-end, not just theorized**: built a one-time "key donor" utility asset (never
+cooked or shipped — see §2's cross-asset tag-copying note) holding all size keys correctly picked,
+then a real destination template populated by copying those key objects onto fresh map entries via
+script, retargeted, packaged, and spawned live in-game. A property dump of the live spawn showed
+the retargeted body mesh AND its skin material both resolving to the correct destination family —
+confirming this closes the exact gap described above (a retargeted mesh no longer carries a
+mismatched skin material of a different, unrelated family).
+
+**A live repro of a real save-persistence bug, worth knowing for this exact "copy keys via script"
+workflow specifically**: editing a property on an asset LOADED from disk (as opposed to one just
+created in the same script) and then saving does not reliably persist — a plain "save" call can
+report success while the file's own bytes and modification time never actually change. Confirmed
+directly: identical edit code, silently no-op with a save call's default arguments, wrote correctly
+every time once told to save unconditionally regardless of the asset's own tracked "changed" state.
+A freshly created asset never hits this (creation itself leaves it in a state that always saves on
+first write), which is why nothing in §7's own from-scratch recipe ever surfaced it — it specifically
+needs a script that loads and edits an EXISTING, already-saved asset in place, exactly the shape the
+key-copying trick above produces.
+
 ---
 
 ## 9. Packaging and installing
