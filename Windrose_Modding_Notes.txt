@@ -8,6 +8,92 @@ technique itself is what's durable, not the name.
 
 ---
 
+Table of contents (this is a plain-text file — search for a heading's exact wording to jump to it)
+
+1. Spawning an actor that actually works
+2. The composite (appearance) system — what sticks and what doesn't
+    2a. Post-build: a genuine ENGINE FUNCTION can work where a raw property write can't
+    2b. Related tricks from the same investigation
+    2c. A second unfamiliar-struct shape exists — check which one before picking a recipe
+    2d. A second, always-populated mesh-attachment array exists separately from the pick list
+3. THE CRASH TRAPS (each cost real debugging hours)
+    3a. Stale UObject pointers — the big one
+    3b. Log BEFORE the dangerous call, never after
+    3c. Component surgery during world load
+    3d. Spawning into a not-yet-live world
+    3e. Two composite builds in one frame
+    3f. `StaticFindObject("/Script/R5.<Component>")` is NOT universally broken
+    3g. Native key-bind registration is only safe during initial mod load
+    3h. A function existing in the object dump doesn't mean it's safe to call
+    3i. A runtime transform call on a Static-mobility component silently no-ops visually
+    3j. A function "safe" at keyboard-driven call rates isn't necessarily safe at UI-driven rates
+    3k. A function defined BEFORE a `local function` it calls silently binds to a global instead
+    3l. INVOKING an unfamiliar UFunction is real crash risk, even when it looks simple
+    3m. A UFunction's OWN return value can be meaningless — check the CALL's success, not the function's return
+    3n. A line-trace's channel argument is a DIFFERENT enum than a component's collision-response API
+    3o. Comparing two independently-fetched object handles with `==` is unreliable, even for the identical underlying object
+    3p. A property write can succeed with zero error yet have no lasting (or any) visible effect, if a native settings/params system re-asserts it
+    3q. How argument counting actually works for a raw UFunction call with a return value
+4. Persisting and restoring actor state across a world load
+5. Peace / faction mechanics
+5b. Movement: THIS GAME DOES NOT USE THE UE NAVMESH
+6. Development workflow that works
+7. Useful class paths
+7b. Reacting to things the GAME itself spawns
+8. Native spawn/scouting machinery (partially explored)
+9. Cross-skeleton re-skinning: what actually determines the result
+    9c. Mechanically discovering EVERY asset of a kind: a folder-shape assumption is never provably exhaustive
+10. Finding which "world" (save) is currently loaded
+11. Content-replacer paks (asset overrides): what's possible from Lua and what isn't
+12. Compiled C++ UE4SS mods: rendering an interactive overlay safely
+    12a. A relative path resolves against the GAME's working directory, in C++ too
+    12b. Hooking a DXGI/D3D vtable function: an inline detour, never a raw vtable swap
+    12c. Capture the REAL command queue by hooking swapchain creation, not by guessing
+    12d. DLSS/FSR frame-generation wrappers can break a naive swapchain-Present overlay
+    12e. A standalone window on its own thread is a safe, working alternative to hooking Present
+    12g. A global ImGui context pointer means two ImGui threads in one DLL is not safe by default
+    12h. Minidump analysis without a full debugger install
+    12i. A mutex around one race can hide a second, independent race behind it
+    12j. A native key-bind hook only fires while the GAME window has OS focus — stealing focus programmatically can break a "press again to undo" key
+    12k. Not every engine-exposed property is reachable from script reflection, even when it visibly exists on the class
+    12l. Toolchain / project shape for a compiled UE4SS C++ mod
+    12m. A toggle reachable from BOTH the game and a companion C++ window needs ONE owner, not two
+    12n. Constructing real UMG widgets natively from C++ — the same primitives a Lua UMG binding uses, just called directly
+    12o. A property's "official" C++ accessor can resolve through a WRONG vtable offset for a specific game build, and crash uncatchably — prefer a raw memory write when the layout is simple and known
+    12p. Binding a native multicast delegate (e.g. a UMG button's click event) from C++, avoiding the same vtable risk as §12o
+    12q. An inherited UFUNCTION can intermittently fail to resolve on an otherwise-valid, freshly-constructed object, for reasons not fully root-caused — build self-healing verification, not just an existence/liveness check
+    12r. Before claiming a native keybind, audit EVERY installed mod's key configuration, not just your own mod's
+    12s. A native post-hook scoped to one instance can still fire from unrelated causes — the mechanism isn't the risk, the CHOICE of bound function is
+    12t. A raw OS-level input poll can be completely blind to mouse buttons in a specific game process while keyboard keys work perfectly through the identical call — and a framework's OWN input pipeline can silently share that same blind spot
+    12u: Never mutate or rebuild a widget tree synchronously from inside a native function hook's callback — it can hang the game, not crash it
+    12v: A panel's own "clear all children" function can silently do nothing live, even though it resolves and returns cleanly — track what you added and remove it explicitly instead
+    12w: Combining a broad-but-reliable native signal with a cheap, independent, per-instance filter beats hunting for a "perfectly exclusive" one
+    12x: A C++ mod's per-frame update hook call rate can silently decay from ~180/sec to ~1/sec over the first ~90 seconds of every session, for a cause not yet root-caused — and a scripting layer's own timer accuracy is NOT a reliable proxy for whether it's affected
+    12y: A generated integration manifest is only as complete as its OWN translation table — adding a new value to the primary consumer doesn't automatically reach a SECONDARY one
+13. Placing an actor relative to a moving ship
+14. Playing a specific canned animation on a live Character
+15. UE4SS's `ExecuteWithDelay` callback does not run on the game thread — and nesting it inside `ExecuteInGameThread` is a separate, differently-broken thing
+16. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName():ToString()` instead
+17. Line-trace-based targeting: object-type queries aren't a strict superset of channel-based ones, and a "does this component exist" check needs a validity check, not just a nil check
+18. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
+    19a. The real structure, confirmed via direct asset-JSON exports (not a live probe this time)
+    19b. What's actually constructible from Lua — confirmed piece by piece, live
+    The recipe that actually worked: edit a real asset file offline, don't construct one at runtime
+    A real third-party counter-example investigated exhaustively — same conclusion holds; the wall is the tooling, not the engine
+    19c. A related, already-proven primitive worth remembering here
+    19d. A second, independent lever for visual variety: swapping which material a mesh slot uses, not the mesh itself
+    19e. The manual soft-reference retarget step is no longer manual
+    19f. Evaluated and rejected: a vendor-provided official authoring-tools editor plugin
+    19g. Rolling one proven recipe out across dozens of near-identical templates in one batch
+    19h. A new identity can be fully authored and shipped before anything in the game actually requests it
+    19i. Two different architectures for making one kind of actor behave like another, and why the simpler one usually wins
+    19j. When to stop trying to inspect a mesh/asset offline and ask the running game instead
+    19k. Building a complete custom outfit from real per-slot pieces, and the mutual-exclusion rule that isn't a bug
+    19l. Facial hair on a composite outfit — four independent failure modes stacked on top of each other, each fully real
+19. Integrating with the "R5 Mod Settings" companion mod
+
+---
+
 ## 1. Spawning an actor that actually works
 
 ```
