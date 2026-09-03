@@ -2311,7 +2311,8 @@ steps that genuinely still need the interactive GUI are the ones already called 
 one-time tag-value property pick (no headless API constructs a fresh tag value from a string, tried
 several different call shapes, all reject it the same way), and the final soft-reference retarget on
 the cooked output (the binary-asset editor's own read side works headlessly; its write/save side does
-not, in every version tried). Running BOTH the authoring script and a full cook is materially faster
+not, in every version tried). **Update, see 19e below: the retarget step is no longer one of these —
+it can now be scripted too, with no GUI at all.** Running BOTH the authoring script and a full cook is materially faster
 and less error-prone than doing the same steps by hand in the GUI for anything beyond a one-off,
 particularly when producing a large batch of near-identical entries.
 
@@ -2361,6 +2362,357 @@ Rebinding a swapped-in skeletal mesh component to share the actor's own skeleton
 technique from earlier per-slot mesh-swap work (documented earlier in this file) before this
 investigation started. Worth checking a project's own prior notes before treating a call as
 untested just because it's new to the specific feature currently being built.
+
+### 19d. A second, independent lever for visual variety: swapping which material a mesh slot uses, not the mesh itself
+
+Once a body-mesh-swap technique exists (retargeting which skeletal mesh a class's body-type asset
+points to, per the recipe above), a natural next question is whether the same asset can also carry
+a size/build variant — not a different mesh, just a different skin material on the SAME mesh slot.
+Confirmed this is a real, separate axis: a body-type asset can carry its own map from a
+size/category key to a material reference, alongside its mesh reference, and both retarget with
+the same offline-edit-then-repoint technique already established.
+
+**A real, general async-write gotcha found here, worth knowing for ANY headless asset-editing
+script, not just this one:** an editor scripting call that saves an asset LOADED from disk (as
+opposed to one freshly created in the same script) can report success while silently writing
+nothing at all — confirmed via the file's own modification time and raw bytes never changing
+across repeated attempts. Root cause: the default "only save if dirty" behavior skips the write
+because a plain property-set call doesn't reliably mark an already-clean, already-on-disk asset as
+dirty. **Fix: force the write unconditionally rather than relying on the dirty flag.** This never
+surfaces when authoring a brand-new asset in the same script (it's already dirty from creation), so
+it only bites scripts that load and edit something that already exists on disk — increasingly the
+common case once a pipeline moves from "author everything from scratch" to "copy settings from a
+donor asset."
+
+**The actual runtime selector that decides which size/category key gets requested for a given
+spawn is not exposed to reflection at all** — checked the full property list on every plausible
+class and a live probe of a repeated spawn (which visibly cycled through different sizes) for any
+gameplay tag that might be the selector; nothing resembling one appears anywhere reachable. Likely
+conclusion: this is intentional per-spawn visual variety happening entirely on the native side, not
+a bug to suppress or a value to read. The practical goal shifts accordingly — not "force a specific
+size," but "make sure whichever key gets requested resolves to something correct" — which just
+means populating every key with a real, appropriate value rather than leaving any of them empty or
+pointed at a mismatched destination.
+
+**A pure-runtime alternative for offering the player an actual size CHOICE, needing zero new
+assets**: every sized skin material observed across every family (native or custom-retargeted)
+shares one naming convention, always ending in a plain size-word suffix. A console command that
+finds whichever material slot on a target's mesh is currently a sized skin material (matched by
+name pattern, not a hardcoded slot index), derives the sibling path for a requested size by
+swapping just that trailing word, and applies it via the same slot-swap primitive already proven
+elsewhere in this file for a different property (eye color) — works on any already-spawned actor
+automatically, with no per-template engineering needed, because the family is read live off
+whatever material happens to already be applied rather than pre-declared anywhere. One real
+implementation gotcha along the way: deriving an asset's own folder path for building a sibling
+path needs the full "ClassName /Package/Path.AssetName" string form and a strip of the leading
+class-name token — a plain "resolve this asset's own path" call returned nothing usable here, where
+the "full name" form used everywhere else in this codebase for exactly this kind of path-string
+need worked immediately.
+
+**A real scope boundary worth stating explicitly, since it's easy to assume otherwise**: swapping
+which material a slot uses is texture-only — it changes what a mesh LOOKS like, not its actual
+geometry. A genuinely different body shape/size (a bigger or smaller frame) is a completely
+separate system with its own real functions (morph-controller getters/setters, a per-actor "body
+morph" vector property) — investigating that further is a real, open follow-on, not something a
+material swap accomplishes as a side effect. Don't assume a texture-swap technique changes shape
+just because "size" is in both features' names.
+
+### 19e. The manual soft-reference retarget step is no longer manual
+
+The one editor-GUI-only step left in the "genuinely new content" recipe above (retargeting a
+soft-reference on an already-cooked asset) turns out to be scriptable after all, via a path that
+doesn't go through the game editor at all: the open-source .NET library the binary-asset GUI editor
+is itself built on is directly usable from plain Python, by hosting a real .NET runtime inside the
+same process (a standard, well-supported technique for calling .NET libraries from Python — no
+editor, no `dotnet` SDK/project needed, only the .NET runtime itself, commonly already present).
+The library's own package can be fetched directly from its official package feed without any
+package-manager tooling installed, since a package file is just a zip archive.
+
+Confirmed working thoroughly, not just "seems to work": (1) a plain read-then-write round trip with
+zero edits is byte-for-byte identical to the original, verified two independent ways; (2) an actual
+soft-reference retarget (the exact operation the GUI editor was previously needed for) reloads
+correctly from disk afterward; (3) independently cross-checked against the GUI editor's own export
+feature, a completely separate code path agreeing the write landed correctly. Confirmed on both a
+plain scalar soft-reference and a map entry's value, selected by its own already-set key.
+
+**One real gotcha, worth knowing for anyone reaching into a strongly-typed object model from a
+scripting language this way**: an object-path-shaped property is commonly a STRUCT (a value type),
+so reading a property and mutating nested fields on the value you got back edits a copy — silently
+a no-op, no error. The fix: construct a whole new struct value with the fields you want and assign
+it back to the property in one shot; never mutate through a chained property-getter on a struct.
+
+**What this changes for the whole pipeline**: the retarget step is no longer a manual,
+one-asset-at-a-time GUI chore — it's a plain, scriptable, fully batchable call, runnable as part of
+the same kind of script the rest of an authoring pipeline already uses. This does not remove the
+other remaining manual step (the one-time gameplay-tag property pick, still needed since nothing
+headless can construct a fresh tag value from a string) — but it removes the step that used to
+follow every single cook.
+
+### 19f. Evaluated and rejected: a vendor-provided official authoring-tools editor plugin
+
+Before settling on the pipeline above, a vendor-published editor plugin aimed at exactly this class
+of problem (packaging content mods without a full custom project) was evaluated as a possible
+replacement for the pak-writing leg specifically. Installed clean with no source changes needed,
+and its actual packaging code was read directly rather than trusting its documentation.
+
+**What it does under the hood, confirmed from source**: cooks via the same headless
+cook-a-specific-package invocation this pipeline already uses, then packages via the plain,
+unmodified engine-bundled pak tool — not a third-party converter. Replicating its exact command
+line by hand against an already-cooked test package (bypassing the plugin's UI entirely) produced a
+structurally normal container, comparable in size and shape to one built the established way — so a
+vanilla, stock pak-writing tool is NOT inherently incompatible with this game's own container
+format, which was the one genuinely open question worth checking here. A theoretical concern about
+the plugin baking the wrong project name into a disk-side mount-point string turned out to be a
+non-issue too: an already-shipped, confirmed-working pak built the established way carries the
+exact same kind of self-referential string — package resolution goes by logical in-game path via a
+package-store manifest, not by that disk-side string, so it never needing to match anything about
+the target game isn't actually a requirement.
+
+**Why it was rejected anyway**: the plugin's packaging feature exposes no scriptable surface at
+all — GUI-only, with no command or scripting hook into it. Adopting it would trade the one
+remaining manual step in an otherwise fully scripted pipeline for an entirely GUI-only one, without
+actually removing any manual work — a worse deal, not a better one. Worth remembering as a general
+pattern: an official, vendor-blessed tool solving the same problem isn't automatically the right
+choice if it removes scriptability rather than adding it.
+
+### 19g. Rolling one proven recipe out across dozens of near-identical templates in one batch
+
+Once a single template of a repeatable asset-authoring recipe is proven correct end to end, scaling
+it to dozens of near-identical templates is mechanical, but has its own real gotchas worth knowing:
+
+**A bare "cook everything" invocation with no explicit target list does not cook custom mod content
+the way an invocation with an explicit target list does.** Running the cook commandlet with no
+target argument at all silently produced only a couple hundred generic engine-default packages and
+zero of the actual target files — no error, exit code reported success. Caught only by checking
+that the cook's OWN OUTPUT FILES actually exist on disk before proceeding to the next step. **Always
+verify a cook step's real output files, never just that the commandlet exited cleanly** — this
+generalizes to any headless pipeline step, not just cooking.
+
+**A batch pipeline hits the same file-lock wall from the write side that a live game hits from the
+read side.** Installing a freshly-built set of containers over an already-loaded IoStore container
+that the game currently has memory-mapped fails with a sharing violation — the exact same
+full-relaunch-required constraint already established for loading a new container applies
+symmetrically to overwriting one; the game has to be closed before the copy, not just before the
+next load.
+
+### 19h. A new identity can be fully authored and shipped before anything in the game actually requests it
+
+A gameplay-tag-keyed asset doesn't need a live consumer to be built correctly — only a real,
+properly-registered tag object matching what SOME class might someday request. This makes it
+practical to "pre-build" coverage for identities that don't exist as playable content yet: register
+a new tag in the authoring project's own local tag configuration (the one remaining manual
+property-pick per genuinely NEW tag — every OTHER entry needing that same tag can just copy the
+already-real tag object off any existing asset that already carries it, via script, with zero
+further manual picking), build the asset the same way as every proven template, and ship it. If a
+matching class is added or discovered later, retargeting to it costs nothing further — the
+groundwork is already in place and just needs its destination filled in.
+
+Worth a companion practice when doing this kind of coverage sweep: audit the full matrix
+PROGRAMMATICALLY (script a check across every combination) rather than trusting a manually-kept
+list — a manually-tracked "these sources are confirmed working" list can silently go stale the
+moment a class turns out to behave differently than assumed (e.g. a class thought to be a fixed,
+reusable template turns out to randomize its own identity on spawn, silently invalidating any
+asset built assuming it stays fixed). A programmatic audit catches this; a remembered list doesn't.
+
+### 19i. Two different architectures for making one kind of actor behave like another, and why the simpler one usually wins
+
+When the goal is "give actor type A the behavior/appearance normally associated with actor type B,"
+there are at least two structurally different ways to get there, and they carry very different
+risk profiles:
+
+**Option 1 — give A's pawn B's AI controller, keep A's own mesh/skeleton untouched.** The
+controller-swap mechanism itself is usually simple (a spawn-time parameter, not new engine
+surface). Confirmed real, useful, partial success this way: friendliness/hostility is a fully
+separate, already-solved mechanism (don't confuse a hostile-on-first-test result with a real
+finding — check whether an unrelated hardcoded flag in the same test path is the actual cause
+before concluding anything about the swap itself), and basic navigation/wandering CAN genuinely
+work under a foreign controller, which is a real, positive result on its own. But **animation
+commonly does not follow along, and the root cause is diagnosable precisely, not mysterious**: a
+foreign controller has no idea about whatever custom per-tick properties the ORIGINAL controller
+was writing every frame to drive that actor's own animation state machine (e.g. custom "speed"
+scalars an animation blueprint reads directly, rather than deriving them from the movement
+component's own velocity) — so those properties sit frozen even while the pawn is genuinely moving,
+and the animation graph reads "not moving" forever. This is a real architectural mismatch, not a
+bug to patch around lightly — fixing it for real would mean finding and manually driving whatever
+those stale properties are, not just swapping controllers.
+
+**Option 2 — the inverse: take an actor that ALREADY has correct, self-sufficient AI and animation,
+and just retarget which mesh/skin it wears.** When available, this sidesteps the whole animation
+problem in option 1 entirely, because nothing about the actor's own controller or animation
+blueprint is touched — only its body-mesh reference changes, using the exact same retarget
+technique as any other mesh-swap in this pipeline. **Confirmed this "just works" with zero
+animation issues**, precisely because it doesn't cross the same boundary option 1 does. **General
+lesson: when a foreign-AI-brain transplant produces a working-but-visually-broken result, check
+whether the inverse — keeping the working AI/animation and retargeting the mesh instead — is
+available before spending more effort patching the transplant.** It's frequently both simpler and
+more robust, since it reuses an already-fully-correct system instead of bridging two systems that
+were never designed to interoperate.
+
+A real, expected limitation of option 2 worth knowing: a donor class's own composite-outfit slot
+roster may not match the target identity's natural one (a native creature class and a human NPC
+class can run on different composite-outfit systems entirely) — some of the target's own natural
+extras may have nowhere to attach without separately building a new slot from scratch, a real but
+separately-scoped follow-on, not a flaw in the mesh-retarget technique itself.
+
+**A hard reflection wall worth recording precisely so it isn't re-attempted blind**: a `TMap`-typed
+property is NOT readable from this scripting layer by any of the standard idioms that work for
+other container types — no iterator protocol, no accessible metatable, no per-element unwrap
+method. If a value genuinely needs reading and it's stored in a map, the more promising path is
+decoding whatever static asset actually holds that data OFFLINE (the same asset-editing toolchain
+used throughout this file), not fighting a live reflection read that this build's map bindings
+simply don't support.
+
+### 19j. When to stop trying to inspect a mesh/asset offline and ask the running game instead
+
+Trying to determine something purely structural about an already-shipped mesh (e.g. whether it
+truly lacks a geometry section another mesh has, versus having it merely hidden) by inspecting the
+raw asset offline hits two real, hard walls, both worth knowing before spending time on either:
+
+**Wall 1 — no editor build can load an unversioned cooked package, full stop.** This is a hardcoded
+engine-level gate checked at load time (`RequiresCookedData()`), not a project setting — no amount
+of configuration changes it. Only an actual cooked, non-editor executable (i.e. the shipped game
+itself) can load these files directly.
+
+**Wall 2 — even converting to a fully-versioned, editor-loadable form via the offline asset-editing
+toolchain doesn't reach the data that actually answers a geometry question.** The property-level
+data (materials, physics asset, skeleton reference, etc.) decodes fine with the right schema
+mapping file loaded — but the actual per-section render/geometry data lives in custom-serialized
+bulk data, not a reflected property at all, and is therefore structurally invisible to any tool
+built on property reflection, regardless of versioned/unversioned status. This is the same
+underlying reason a handful of other special-cased engine types (e.g. curve data) were already
+found unreadable this way earlier in this file — a custom serialization override bypasses the
+reflection system these tools are built on, and there's no way around that from outside the engine.
+
+**The path that actually works: ask the live, already-cooked game process, since it already loads
+these packages just fine, and its own scripting layer's reflection exposes the relevant real
+functions regardless of the property-serialization wall above** (e.g. a mesh component's own
+material-slot-count and per-slot-material getters). A genuinely missing geometry SECTION (not just
+a hidden material on an existing one) shows up as a real, smaller slot count on one mesh versus
+another when queried this way — a comparison a live probe answers cleanly in seconds, that no
+amount of offline tooling could reach at all. **General lesson: once an offline inspection hits a
+custom-serialization wall, stop — the answer usually isn't in a smarter offline tool, it's in
+asking the already-running, already-cooked process directly via whatever live reflection the
+scripting layer exposes.**
+
+### 19k. Building a complete custom outfit from real per-slot pieces, and the mutual-exclusion rule that isn't a bug
+
+Beyond overriding a single reference on an existing outfit asset, a genuinely custom OUTFIT —
+picking an arbitrary combination of real per-slot pieces from across different in-game families —
+is achievable with the same from-scratch authoring + retarget recipe established earlier in this
+file, extended one step further: retargeting an ARRAY of hard object references, not just a single
+scalar one. The technique is identical per element (same leaf-object + owning-package rename,
+looped over each array index) — the only new requirement is that each array slot needs a real
+placeholder sub-object to retarget, since the per-piece asset class here has no lightweight
+scripted constructor the way a plain engine mesh/material reference does; a real (if empty)
+placeholder instance of the same class has to be authored first, exactly like any other top-level
+asset in this pipeline.
+
+**Each individual piece is self-describing about which body slot it fills** (a plain enum field on
+the piece asset itself), so the ORDER pieces are listed in an array doesn't matter — only which
+pieces get referenced. This makes assembling an arbitrary combination straightforward once the
+piece-level asset type is understood.
+
+**A real, instructive dead end: duplicating and renaming an existing real extracted asset — even
+with byte-for-byte correct internal content — does not work for shipping it as a genuinely new
+package.** This resolves as a silent, unhelpful "not found" at runtime. The reason traces back to
+this file's own earlier finding about new package paths: the higher-level resolution API that finds
+a genuinely new package only works for something actually cooked by a real editor cook under that
+path — a raw file copy, however internally correct, never generates that registry metadata no
+matter how it's renamed. **The fix is the same one already established: author it properly from
+scratch via script, don't repurpose a renamed copy of something else.**
+
+**A real, easy-to-miss correctness bug: content authored for only one sex silently disappears for
+the other, with no error anywhere.** If an individual piece's own per-sex mesh map has no entry for
+the sex actually being built, the composite system just drops that piece from the build silently —
+no log line, no crash, nothing that flags which piece or why. Confirmed by inspecting each
+suspect piece's own per-sex map directly rather than guessing from the visible symptom. **Practical
+rule: when sourcing pieces for a genuinely cross-sex outfit, verify each piece actually has content
+for BOTH sexes before relying on it** — a piece that looks correct on whichever sex it was tested on
+can be silently male-only or female-only underneath.
+
+**A real, confirmed engine/design-level constraint, not a bug in any tooling: some slot pairs are
+mutually exclusive by design, and this is invisible until tested directly.** Two per-slot pieces
+that individually build perfectly fine can silently fail to coexist when both are part of the same
+build — one silently wins, the other is just dropped, with the exact same "correct data, wrong
+result, no error" signature as the sex-mismatch bug above, but with a completely different actual
+cause. This was root-caused by noticing, across a wide sample of pre-existing native NPCs, that
+every one that successfully used slot X had no piece in slot Y at all — never confirmed by reasoning
+about the engine, only by pattern-matching many independent real examples and then verifying the
+pattern with a clean, minimal isolated test (build a group with ONLY the two suspect slots, confirm
+only one survives). **General lesson: when a per-slot composite system produces a correct-looking
+build that's nonetheless missing exactly one piece, don't assume a retarget/content bug before
+checking whether the missing piece's slot is simply incompatible with something else already in the
+build** — the fix in that case isn't more debugging, it's picking one of the two slots as the
+default and leaving the other reachable only when the excluded one isn't present.
+
+**Reinforcing an already-established rule that's easy to second-guess mid-investigation: a brand-new
+pak genuinely needs a full game restart, never a same-session retry.** A fresh, never-before-loaded
+container reporting "not found" on its very first live test is not evidence the container itself is
+broken — restarting fixed it every time this was tested, and suggesting a same-session retry instead
+(based on an unrelated, different scenario's apparent success) is the wrong instinct to reach for
+here. If a brand-new container's first test comes back empty, restart before concluding anything else
+is wrong.
+
+### 19l. Facial hair on a composite outfit — four independent failure modes stacked on top of each other, each fully real
+
+Extending a custom composite outfit (19k) to include facial hair (eyebrows, mustache, beard,
+sideburns/whiskers, head hair) surfaced four genuinely separate bugs, each needing its own fix, each
+confirmed live before moving to the next — worth recording distinctly since each one is a real,
+generalizable lesson on its own, not a single combined issue:
+
+**1. Referencing two separate per-slot GROUP assets in one section's list silently drops the
+second one, always, regardless of the first group's own size.** A natural way to organize a growing
+outfit is one group asset for the base outfit and a second, separate group asset for an add-on
+category (facial hair, in this case), both referenced together under the same section. This
+doesn't work — the second group in the list never builds. Ruled out an "array too long" theory
+first (trimmed the first group back to its previously-proven-working size and re-tested — still
+broken), isolating the real cause to having multiple group references in one list specifically.
+**Fix: merge every piece — base outfit AND add-on category — into ONE group's own array instead of
+referencing two groups.** One group, one list, just more entries in it.
+
+**2. Re-cooking a group that was previously retargeted resets EVERY entry in it back to a blank
+placeholder, not just the newly-added ones.** The offline retarget technique (19e) only ever edits
+the raw reference table of an already-cooked file on disk — it never feeds back into the editor
+project's own source asset, which stays a set of empty placeholders forever. Growing an array's
+size (to add new entries) requires a fresh cook to bake in the new size, and that cook re-derives
+the WHOLE array from the untouched source — silently discarding the retarget of every entry that
+was already correctly pointed at real content, not just the new ones. The visible symptom was total
+failure (nothing at all rendered, not even the parts that had worked moments before), because an
+empty placeholder entry apparently aborts that entire group's build rather than just leaving its own
+slot empty. **Fix, now a standing rule: after ANY cook of a group that has ever been retargeted,
+always re-retarget its FULL array from scratch, never just the slice that changed.** A "the rest was
+already fine, I'll only touch the new part" shortcut is exactly what causes this.
+
+**3. Some real in-game asset paths that look like the leaf piece a system expects are actually a
+wrapper CONTAINER around the real leaf piece, one folder level deeper — and the offline retarget
+technique has no way to catch this on its own.** Several real facial-hair asset paths, confirmed by
+their own naming convention, turned out to be a "group" wrapper class holding exactly one real leaf
+piece inside it, not the leaf piece type a per-slot array actually expects. Retargeting to the
+wrapper "succeeds" and even reload-verifies correctly, because the raw reference-renaming technique
+only ever checks that a package/object NAME exists — it never checks the target's actual CLASS. The
+load then silently fails to resolve as the expected type at runtime, with no error anywhere
+visible. **Fix: build (or reuse) a small live diagnostic that resolves a path exactly the way the
+real consuming system does and prints the resolved object's actual class** — the SDK-stub editor
+project can't be used for this check here, since it can't load these real, unversioned game assets
+at all (19j's wall 1) — so this has to be a live, in-game reflection check, not an offline one.
+Once a wrapper is confirmed, resolve one level deeper to the leaf object actually referenced inside
+it, and retarget to THAT instead. Leaf names inside a wrapper do not necessarily follow the
+wrapper's own naming pattern predictably — check each one individually via the live diagnostic
+rather than assuming a naming pattern generalizes from one confirmed example.
+
+**4. A slot can be mutually exclusive with a completely unrelated category, for a purely
+content/design reason, and this looks identical to a bug until checked.** With the first three bugs
+fixed, one narrow category still refused to build. Root cause: a piece elsewhere in the same build
+(specifically, one associated with a mesh that visually covers the same facial area) turned out to
+exclude the affected category the exact same way an earlier, unrelated pair of slots excluded each
+other in 19k — a real, design-level exclusivity rule, not a leftover tooling bug. Since the
+excluding piece's own real content was a narrow, one-off variant (not core to the outfit), the
+practical resolution was simply dropping it rather than spending further effort confirming and
+working around a second exclusion rule for one niche asset. **General lesson, extending 19k's own:
+once one mutual-exclusion pair is confirmed in a per-slot composite system, treat any other
+inexplicably-missing piece as a candidate for the SAME kind of exclusion before assuming a new bug
+— and weigh whether the excluding content is actually worth keeping before spending more effort
+working around it.**
 
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
