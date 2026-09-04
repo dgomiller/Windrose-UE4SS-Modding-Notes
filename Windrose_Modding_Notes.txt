@@ -90,6 +90,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     19j. When to stop trying to inspect a mesh/asset offline and ask the running game instead
     19k. Building a complete custom outfit from real per-slot pieces, and the mutual-exclusion rule that isn't a bug
     19l. Facial hair on a composite outfit — four independent failure modes stacked on top of each other, each fully real
+    19m. Attaching extra decorative pieces to sockets on a composite outfit, and four real gotchas along the way
 19. Integrating with the "R5 Mod Settings" companion mod
 
 ---
@@ -2799,6 +2800,52 @@ once one mutual-exclusion pair is confirmed in a per-slot composite system, trea
 inexplicably-missing piece as a candidate for the SAME kind of exclusion before assuming a new bug
 — and weigh whether the excluding content is actually worth keeping before spending more effort
 working around it.**
+
+### 19m. Attaching extra decorative pieces to sockets on a composite outfit, and four real gotchas along the way
+
+Beyond the per-slot pieces covered in 19k, several of those pieces also carry their own small
+decorative sub-attachments — a pouch, a knife, a prop weapon — each hooked to a named socket with
+its own baked offset. Reproducing that attach behavior at runtime (for testing arbitrary
+combinations, not just whatever a piece ships with) surfaced four independent, worth-recording
+lessons:
+
+**1. Identity transform looks visibly wrong; the real baked offset per (socket, mesh) pair already
+exists in the source data and should be extracted rather than guessed.** Every piece's own
+attachment list bakes a real rotation/translation/scale for each socket+mesh pairing it was authored
+with. A batch offline scan across every real piece in the relevant content pool recovers this data
+in one pass and can be reused as a lookup table keyed by the (socket, mesh) pair — falling back to
+identity only for pairs that were never actually authored anywhere. Only pull this from source data
+that was actually shipped; don't infer transforms from a visually-similar-looking pairing.
+
+**2. That baked rotation is a raw quaternion, but a live relative-rotation API more commonly expects
+a Pitch/Yaw/Roll rotator.** Converting once at attach time with the standard quaternion-to-rotator
+formula (careful with the two-argument arctangent — not every scripting runtime exposes it under the
+same name, so a small compatibility fallback is worth writing once) avoids introducing a second,
+inconsistent rotation-setting convention alongside whatever the rest of the codebase already uses.
+
+**3. Hiding a component only ever affects rendering, never collision.** A long hidden prop can still
+physically block movement or line-of-sight checks even though it's invisible — confirmed directly by
+testing rather than assumed. Any hide/restore pathway for a mesh component needs to explicitly toggle
+its collision response alongside its visibility, not rely on visibility implying "gone" in every
+sense.
+
+**4. Before concluding a socket/attachment combination has "no real data" and needs manual tuning,
+scan for its raw usage across the WHOLE relevant content pool, not just the subset that already
+parsed cleanly into a derived table.** A batch extraction pass that skips entries it can't fully
+parse can under-report which sockets genuinely have no real content, versus which ones simply hit a
+parsing edge case. Re-scanning for the raw key alone (ignoring whether the rest of that entry parsed)
+settles the question cleanly: if it's never referenced anywhere in the full content pool, there truly
+is nothing to extract, and manual tuning (or leaving it at identity) is the only remaining option —
+but that conclusion should be earned by an exhaustive check, not assumed from a first pass's gaps.
+
+**Separately, a real lesson about naming collisions between unrelated systems**: two different
+commands/mechanisms built at different times can end up sharing a family nickname (because they
+serve a related-sounding purpose) while doing genuinely unrelated things underneath — one spawning a
+class with a full custom override, the other deliberately spawning with no override at all to
+exercise native random rolls on a different body type. A bug report naming one should never be
+assumed to implicate the other just because they share a name; re-read each mechanism's actual
+implementation before diagnosing, especially once a report's symptoms ("random every time") turn out
+to be exactly what the other, unrelated mechanism was designed to do on purpose.
 
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
