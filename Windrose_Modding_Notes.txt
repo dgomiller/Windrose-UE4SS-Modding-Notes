@@ -91,6 +91,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     19k. Building a complete custom outfit from real per-slot pieces, and the mutual-exclusion rule that isn't a bug
     19l. Facial hair on a composite outfit — four independent failure modes stacked on top of each other, each fully real
     19m. Attaching extra decorative pieces to sockets on a composite outfit, and four real gotchas along the way
+    19n. A random-loadout generator built on top of a composite outfit — six lessons, most of them not really about randomness at all
 19. Integrating with the "R5 Mod Settings" companion mod
 
 ---
@@ -2846,6 +2847,63 @@ exercise native random rolls on a different body type. A bug report naming one s
 assumed to implicate the other just because they share a name; re-read each mechanism's actual
 implementation before diagnosing, especially once a report's symptoms ("random every time") turn out
 to be exactly what the other, unrelated mechanism was designed to do on purpose.
+
+### 19n. A random-loadout generator built on top of a composite outfit — six lessons, most of them not really about randomness at all
+
+Extending the socket-attachment idea from 19m into a genuine randomizer (roll a plausible-looking
+set of accessories/weapons onto a character instead of placing one item by hand) surfaced several
+lessons worth keeping separate from each other, since most of them turned out to be ordinary logic
+bugs wearing a "random" costume rather than anything probability-specific:
+
+**1. A library/engine's own success flag only proves no error was thrown — never that the called
+function's OWN internal check passed.** Wrapping a call in a protected-call helper and checking only
+that flag looks like proof the operation worked, but a function that reports its own real failures
+(no matching target, nothing resolved, wrong state) via a normal return value rather than an error
+will report "succeeded" every time regardless. Any logic gated on "did that call work" needs to
+inspect the actual return value, not just whether the call raised.
+
+**2. An unseeded random-number generator can silently run the exact same sequence every single
+time a script reloads.** A live "why does this always roll the same outcome" report — dismissed at
+first as an inherently low-probability run of bad luck — turned out to be exactly that: nothing in
+the whole codebase had ever explicitly seeded the RNG, so every fresh script load replayed the same
+deterministic sequence from the start. A one-time seed call using whatever real time source is
+available (falling back to something else that varies run to run if the obvious one isn't exposed in
+a sandboxed runtime) fixed it permanently. Worth checking for in any codebase old enough that "just
+call random()" was never revisited after the first script was written.
+
+**3. Before trusting a NEW dependency rule, check whether an OLDER, opposite-direction rule is still
+active and quietly overriding it.** A "category B should require category A" rule was added and
+tested, but a percentage-based roll for B kept looking wrong regardless of what the new logic did —
+the real cause was a much older feature (built for a completely different reason: a convenience
+auto-fill when a human picks A by hand) still forcibly attaching B every time A was chosen, upstream
+of the new logic entirely. The new rule was correct from the start; a leftover automation nobody
+remembered was still running was fighting it. When a supposedly-independent random roll keeps
+producing a suspiciously consistent result, check for older automation touching the same fields
+before assuming the new code has a math bug.
+
+**4. Weighted random selection with a "shared trait" bonus is a cheap way to make a big item catalog
+feel like it's telling one coherent story.** Track which tags have appeared among everything already
+picked this generation pass; when weighing the next pick, multiply an item's normal rarity weight by
+a flat bonus (2x, in this case) if it shares any tag with something already chosen. Costs almost
+nothing to implement on top of ordinary weighted-random selection, and reliably nudges an otherwise
+fully independent set of rolls toward a recognizable theme without ever forcing one.
+
+**5. A hand-authored spreadsheet's own free-text labels can be internally inconsistent in ways its
+structural identifiers never are — trust the identifiers.** One tab of a design spreadsheet called a
+particular group of attachment points by one name; a different tab, describing the exact same
+physical attachment points, called it something else. Grouping/eligibility logic built on those
+labels would have silently split what should have been one group into two. Fixed by deriving every
+grouping from the real, structurally-consistent identifiers (the attachment-point names themselves)
+and treating the sheet's own descriptive text columns as read-only commentary, never as a join key.
+
+**6. A "roll a random amount per sub-category, up to that sub-category's own maximum" system still
+needs an OVERALL ceiling across sibling sub-categories if the individual maximums can sum past what
+actually looks right.** Three sibling accessory categories each independently allowed up to their
+own cap, but their combined worst case cluttered one area of a character far more than intended.
+Fixed with a second, shared ceiling checked across all three at once, clamping each category's own
+roll to whatever room is still available under it. Worth pairing with a shuffled processing order
+across the sibling categories, too — otherwise whichever one is always evaluated first permanently
+wins any capped-out contention, and the others are the only ones ever squeezed.
 
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
