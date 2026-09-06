@@ -92,6 +92,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     19l. Facial hair on a composite outfit — four independent failure modes stacked on top of each other, each fully real
     19m. Attaching extra decorative pieces to sockets on a composite outfit, and four real gotchas along the way
     19n. A random-loadout generator built on top of a composite outfit — six lessons, most of them not really about randomness at all
+    19o. Naming a mechanism's parts after their role, when the role turns out not to hold consistently
 19. Integrating with the "R5 Mod Settings" companion mod
 
 ---
@@ -2904,6 +2905,30 @@ Fixed with a second, shared ceiling checked across all three at once, clamping e
 roll to whatever room is still available under it. Worth pairing with a shuffled processing order
 across the sibling categories, too — otherwise whichever one is always evaluated first permanently
 wins any capped-out contention, and the others are the only ones ever squeezed.
+
+### 19o. Naming a mechanism's parts after their role, when the role turns out not to hold consistently
+
+A per-instance numeric color-recoloring mechanism (three independent color channels on a shared
+material) was originally named after what a code comment inside the shader itself called them —
+"Main/Secondary/Detail." That naming got carried straight into the tool built to drive it. Real
+testing across every kind of piece the mechanism applies to found the labels don't actually hold:
+which channel paints which visible part of a given piece varies from piece to piece, so calling them
+by a fixed role overpromised a consistency the system doesn't have. Renamed to plain, neutral
+ordinal labels (Color1/Color2/Color3) instead — same three channels, same mechanism, just without a
+name implying a semantic guarantee testing had already disproven. **General lesson: a label borrowed
+from an internal comment or a first, small-scale test can be wrong at the SYSTEM level even when
+it's accurate for the one case it was coined from — don't let a mechanism's naming outrun how far
+its behavior has actually been verified to generalize.**
+
+**A related, separate finding from the same testing pass, worth its own note**: for one particular
+piece category, a single visible result is produced by whichever ONE of the three channels a given
+individual asset happens to read — with no way to know in advance which one that is for an arbitrary
+new asset. Rather than special-case every asset to discover its one real channel, the practical fix
+is to write the SAME value to all three channels at once, guaranteeing the right one gets it
+regardless of which it turns out to be. **General lesson: when a system's real write target is
+piece-dependent and not worth enumerating exhaustively, writing redundantly to every plausible
+target is a legitimate, low-cost way to be correct without needing to know which one actually
+matters for a given case.**
 
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
