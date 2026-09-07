@@ -94,6 +94,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     19n. A random-loadout generator built on top of a composite outfit — six lessons, most of them not really about randomness at all
     19o. Naming a mechanism's parts after their role, when the role turns out not to hold consistently
 19. Integrating with the "R5 Mod Settings" companion mod
+20. A "not yet started" note is a snapshot, not a durable fact
 
 ---
 
@@ -3082,3 +3083,29 @@ ARRAY itself the moment it grows past 9 entries — `"10"` sorts before `"2"` as
 in-panel row order look effectively random rather than the order you actually built it in. Sort
 numeric array indices numerically and keep string field names sorted alphabetically, as two separate
 passes, not one generic string-sort over everything.
+
+## 20. A "not yet started" note is a snapshot, not a durable fact
+
+A large piece of real, working, offline-authored content (dozens of generated variant assets) sat
+finished and verified-workable on disk for a long stretch before anyone circled back to it. The
+project's own notes still described it as "not yet started," written accurately at the time, but
+never revisited once the work actually happened in a later, separate session. Picking the project
+back up meant trusting that note at face value — and very nearly redoing work that was already
+done, because nothing signaled the note itself had gone stale.
+
+**General lesson: a status note ("not started," "TODO," "pending") is true only as of the moment it
+was written — it carries no guarantee about later sessions, and nothing enforces that someone
+updates it when the described work actually happens.** Before trusting a "not yet done" claim enough
+to act on it (start the work, or ask a collaborator to re-decide something it implies is still
+open), it's worth a quick, cheap check against ground truth first — does the described output
+already exist somewhere (a build folder, an output directory, version control's own uncommitted
+changes)? A stale positive claim ("this works") is often caught quickly once someone tries to use
+the thing and it doesn't. A stale NEGATIVE claim ("this isn't done yet") is far more dangerous,
+because it actively discourages ever looking for evidence to the contrary — nothing prompts a check.
+
+**A related, smaller lesson from the same recovery**: when reconstructing an exact identifier (a
+file path, a class name, an internal key) from a note's own prose description rather than from an
+authoritative index/lookup table the project already maintains, treat the reconstruction as a guess
+until confirmed — a paraphrased or partially-remembered path is a very easy way to silently test the
+wrong thing and misread the result as a failure of the real content, rather than a failure of the
+guess.
