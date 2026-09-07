@@ -2930,6 +2930,18 @@ piece-dependent and not worth enumerating exhaustively, writing redundantly to e
 target is a legitimate, low-cost way to be correct without needing to know which one actually
 matters for a given case.**
 
+**A related closing note, from finishing out this same recoloring system**: a second, older
+mechanism for the same visual property (a small set of discrete pre-made material variants, built
+before the numeric-channel mechanism above was understood) had been kept alongside it on the theory
+that both were independently useful — one for natural-looking shades, one for a few bold, stylized
+looks. Testing every discrete variant directly against its numeric-channel counterpart found most of
+them were simply duplicates rendering the same result two different ways; only the one variant with
+a genuinely different rendering property (an emissive/glowing look the numeric channel's palette has
+no entry for) earned keeping as its own separate option. **General lesson: when two mechanisms
+appear to solve the same visual problem from different angles, don't assume both are pulling their
+weight just because neither has been proven wrong — a direct side-by-side comparison can reveal one
+mostly subsumes the other, leaving only its genuine outliers worth keeping as a separate path.**
+
 ## 19. Integrating with the "R5 Mod Settings" companion mod
 
 There's a free third-party UE4SS mod, commonly called "R5 Mod Settings" (published on Nexus as
