@@ -95,6 +95,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     19o. Naming a mechanism's parts after their role, when the role turns out not to hold consistently
 19. Integrating with the "R5 Mod Settings" companion mod
 20. A "not yet started" note is a snapshot, not a durable fact
+21. A live reflection probe that resolves cleanly but reads empty can mean the data doesn't exist to read, not that the property path is wrong
 
 ---
 
@@ -3109,3 +3110,37 @@ authoritative index/lookup table the project already maintains, treat the recons
 until confirmed — a paraphrased or partially-remembered path is a very easy way to silently test the
 wrong thing and misread the result as a failure of the real content, rather than a failure of the
 guess.
+
+---
+
+## 21. A live reflection probe that resolves cleanly but reads empty can mean the data doesn't exist to read, not that the property path is wrong
+
+A binary-parsing technique already validated on one asset class failed on a second, related class —
+the raw file layout genuinely differed, not a bug in the parser. Rather than reverse-engineer a
+second unknown binary format offline, the next attempt asked the running game directly: a live
+reflection probe walked the exact property chain the asset's own class should expose (an array of
+sub-objects, each holding several nested curve structs, each with a keyframe array), defensively
+trying more than one plausible property-path spelling at each step. It worked, in the sense that
+every step resolved cleanly — the array length matched the expected count, every nested struct was
+reachable, no property-name guess failed. And the actual keyframe data was empty at every single
+leaf, with total consistency.
+
+**A clean resolve at every step, with the terminal value empty, is itself a real result — not a
+signal to keep guessing property-name spellings.** Some engine authoring data legitimately does not
+survive cooking into a packaged build (this project's own established "cook once, edit once"
+constraint, applied here to editor-only curve keyframes instead of a soft-object reference): the
+live object was never going to have the data, no matter how correctly it was addressed. The tell
+was the *shape* of the failure — not "can't find this property" at some step, but "found it, and
+it's empty" at every leaf, uniformly, across every one of two dozen repeated substructures. A single
+inconsistent property-path guess tends to fail unevenly (works on some entries, not others, or fails
+partway down the chain); a uniform, total, structurally-clean emptiness across the board looks much
+more like "this data was legitimately stripped" than "one of several guessed names is wrong."
+
+**The actual fix wasn't a better live probe — it was a smarter offline tool.** A general-purpose
+game-asset explorer built specifically for this engine already understood the class's real,
+non-obvious serialization layout and could export its live authoring properties (including the
+supposedly-missing keyframes) as plain structured JSON directly from the source package, before
+cooking ever stripped them. No binary parsing, no property-path guessing — just asking a tool that
+already speaks the format natively instead of a general-purpose editor/reflection layer that
+doesn't. Worth trying early alongside (not only after) both the binary-parsing and live-probe
+routes, especially for any engine class with known editor-only authoring data.
