@@ -96,6 +96,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 19. Integrating with the "R5 Mod Settings" companion mod
 20. A "not yet started" note is a snapshot, not a durable fact
 21. A live reflection probe that resolves cleanly but reads empty can mean the data doesn't exist to read, not that the property path is wrong
+22. Before concluding a live write reverted, rule out that the read is looking at a different object
 
 ---
 
@@ -3144,3 +3145,41 @@ cooking ever stripped them. No binary parsing, no property-path guessing — jus
 already speaks the format natively instead of a general-purpose editor/reflection layer that
 doesn't. Worth trying early alongside (not only after) both the binary-parsing and live-probe
 routes, especially for any engine class with known editor-only authoring data.
+
+---
+
+## 22. Before concluding a live write reverted, rule out that the read is looking at a different object
+
+A write-then-read round trip kept failing: a property write returned success, the change was
+visibly confirmed at the moment of writing, and a read moments later — through more than one
+independent code path — showed no trace of it. The natural conclusion was that something reverted
+the write. That theory drove a real investigation (probing for a periodic system that might be
+resetting the property) before a much simpler explanation surfaced: the write and the read had not
+necessarily touched the same object at all.
+
+**The mechanism scoped this project's own targeting already knows about, but a fresh debugging
+session can forget under pressure**: when nothing is explicitly locked, "the current target" is
+re-resolved fresh on every single call (nearest/most-central candidate in front of the camera at
+that instant). Two calls made even tens of seconds apart, with the player having moved, turned, or
+just had another candidate wander into frame in between, can silently resolve to two different
+objects — and if those objects share the same COSMETIC display label (the same NPC archetype
+spawned twice, or simply named alike), nothing about the two calls' own logging looks wrong. Each
+one individually reports success and a plausible-looking actor name; only comparing their full,
+per-instance identity (not just the display label) reveals they were never the same object.
+
+**Before trusting a "the write didn't hold" conclusion enough to go hunting for a reverting
+system**, log and compare a genuinely unique per-instance identity (a full object path, not a
+cosmetic label) for the object each half of the round trip actually touched — not just at the end,
+build this logging in from the first repro, so it costs nothing to check the moment the mismatch
+theory becomes plausible. Also worth checking explicitly whether the read genuinely happened
+against a LOCKED target, if the system has an explicit lock concept — an unlocked "nearest thing"
+picker is a moving target by design, and closing the tool used to establish a lock can itself
+silently release that lock, quietly turning what looked like a controlled repro back into two
+independent, unlocked picks.
+
+This doesn't mean a live reassertion system is never the real cause — a separate, later isolation
+test (same mechanism, only one candidate object anywhere nearby, so identity couldn't be
+ambiguous) confirmed a genuine revert was ALSO happening independently. But identity confusion and
+a real underlying revert are two different bugs that produce the identical surface symptom ("read
+back empty/unchanged"), and only one of them needed a whole new investigation to explain — ruling
+out the cheap, purely-logging explanation first would have saved that detour.
