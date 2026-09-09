@@ -522,3 +522,72 @@ a genuinely new native-class Blueprint is broken**:
   the first one that's tried) rather than assuming the packaging is at fault will usually surface
   this quickly — the class typically DOES resolve via at least one strategy once the exact naming
   convention it's actually indexed under is used.
+
+---
+
+## 11. A genuinely new native-class Blueprint spawns fine — making it look and act like a real one is a separate, ongoing task
+
+Confirming a from-scratch class spawns without crashing (§10) answers whether the MECHANISM works. It
+does not, by itself, produce anything that looks or behaves like an existing NPC. A real donor class
+provides a whole pile of "free" native setup as class defaults — a base body mesh, a valid pool to
+resolve a requested body/sex variant against, an animation blueprint driving the skeleton, movement
+tuning that settles the actor onto the ground. A from-scratch class provides literally none of it.
+Anything not EXPLICITLY set at runtime, after the object already exists, is simply absent — not
+defaulted to something reasonable, not silently inherited from a sibling class, just empty. Every
+symptom below traces back to this one fact, not a separate bug per symptom.
+
+**Invisible actor (empty base mesh).** If existing runtime logic conditionally skips re-applying a
+mesh override on the theory that "an earlier step in the pipeline already handled it," check that
+assumption explicitly for a from-scratch class rather than trusting it. A real donor's own class
+defaults mean an earlier archetype/sex-resolution step genuinely does leave a valid mesh in place, so
+skipping a later, redundant override is correct and desired for it. A blank class has no such default,
+so the same skip logic silently leaves the render mesh empty — the actor spawns, occupies its
+transform, everything reports success, and nothing is visible. The fix is not to remove the skip
+(it's still correct for real donors, and removing it can reintroduce whatever crash/race the skip was
+added to prevent) — read back whether the mesh is ACTUALLY set before honoring the skip, and apply
+the override anyway if it isn't.
+
+**A resource that resolves inconsistently, first-call vs. retried.** A from-scratch class's spawn
+touches none of a real donor's usual side-effect content as it builds — nothing about it primes any
+caches a shared asset-resolution helper might otherwise be relying on. A reference that's never been
+touched by anything else this session can genuinely fail a single load-then-retry resolution attempt
+and then succeed cleanly on an immediate second attempt with no other change at all — a cold-cache
+timing race, not a wrong path or a genuine resolution failure. If a direct A/B test (issue the
+identical call twice back to back) shows exactly this pattern — fails once, then works immediately
+after with zero changes — the fix is a bounded internal retry with a short real delay between
+attempts, not more path-guessing. It won't reproduce on every single call (that's expected for a
+timing race), so confirm the fix by running several fresh tests, not just one.
+
+**Sex/variant resolution silently never lands.** If body-type or sex resolution is driven by pointing
+a customization component at a "pool" data asset the game resolves variants from, and a real donor's
+own class defaults already point at that pool implicitly, a from-scratch class simply has nothing
+there — the requested variant has no pool to resolve against, and the request silently no-ops (reads
+back unchanged) rather than erroring. The fix is to find that pool asset's own real path (the same
+asset-registry enumeration technique from §10's own resolution work, pointed at the pool's own class
+type and filtered by name, is the reliable way to find it live rather than guessing an offline path)
+and pass it explicitly at the same runtime, pre-construction point everything else in this pipeline
+already gets set. This is a no-op for a real donor (it already resolves against the exact same shared
+pool) and the actual fix for a from-scratch class.
+
+**Visible but frozen in a bind pose, or floating above the ground.** A raw T-pose with zero animation
+playing means no AnimInstance is actually running on the skeletal mesh component at all — nothing
+ever assigned an Animation Blueprint class to it, again because a real donor's class defaults do this
+and a blank class doesn't. Assigning one at runtime (through whatever function reconstructs the live
+AnimInstance, not just a bare property write, since a bare write may not force the instance to
+rebuild) is a well-supported, standard operation — but it only produces a correct pose if the
+Animation Blueprint being assigned was actually authored against the SAME skeleton the mesh uses;
+forcing a mismatched skeleton/AnimBP pairing T-poses for an entirely different, unrelated reason (a
+genuine skeletal incompatibility, not a missing-assignment problem) and should not be mistaken for
+the same bug. Floating (failing to settle onto the ground) looks related but is likely a distinct gap
+in the same family — a real donor's own Blueprint typically overrides some of its inherited movement
+component's default tuning (gravity, ground-detection), and a blank class, having no such override,
+may behave differently at the moment its AI/physics ticking gets frozen for a static capture — worth
+checking independently rather than assuming one fix resolves both symptoms.
+
+**The general lesson**: treat "spawns without crashing" and "looks/behaves like the real thing" as two
+separate milestones with a real gap between them, not one continuous slope. Every gap in that space so
+far has had the exact same shape — some reference or override a real donor's own class defaults
+supply for free, silently absent on a class built from nothing — which makes each one individually
+cheap to fix once found, but means expecting them to be discovered as a batch up front (rather than
+one at a time, each only visible once the previous one stops masking it) is the wrong expectation to
+set going in.
