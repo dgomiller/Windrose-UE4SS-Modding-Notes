@@ -170,6 +170,34 @@ spawn them.
 "Fable" is an *ethnicity* label here, not a hero body — `MI_Fable_Male_*`-style materials swap
 like any other skin.
 
+**The wall is bigger than "BODY/SKIN/HAIR properties don't stick" — it also blocks forcing a
+SECOND real composite build after construction, full stop, even via genuine dedicated engine
+functions (§2a below).** Changing an actor's sex (via a documented, working native setter — see
+§2a) and its outfit reference together, post-build, can make BOTH backing values read back
+correctly changed on their own — the sex getter returns the new value, the outfit reference
+genuinely points at the new asset — while the actual composite mesh population stays permanently
+whatever it resolved to at the ONE real build, now empty for both slots (the old outfit no longer
+matches the new sex, and nothing re-derives from the new one). Tried, in order, and confirmed dead:
+calling the sex-change setter again after also changing the outfit reference; a same-class rebuild
+function taking a single integer parameter (an index into an unrelated internal preset list, not a
+general "rebuild everything from current state" trigger — confirmed by reading the function's own
+declared parameter LIST directly, a narrower and so far safer reflection query than the whole-class
+function-name ENUMERATION already documented as crash-prone elsewhere in this file, though not
+proven zero-risk either — check one function's own signature this way before ever risking a live
+call with a guessed argument); a second dedicated setter taking BOTH the body-type tag and sex
+explicitly (the same one documented as a crash risk in §3h below — see that entry's own addendum
+for how to call it without crashing, which doesn't help here regardless: a clean, non-crashing call
+still leaves the build population untouched). **None of these count as
+counter-examples to §2a's own "a real function can work where a property can't" finding — each one
+DID genuinely execute and, where checked, genuinely changed its own backing property. They just
+don't trigger a second real build.** The only reliable fix is upstream of all of this: set
+everything the build will ever need to resolve correctly — including sex, outfit, AND the
+archetype/preset reference itself — all BEFORE the one real build happens, never after. Since
+`ArchetypePreset` itself can't be freely invented (§10's own struct/tag limitations apply), the
+practical technique is reusing another real actor/class's OWN already-correctly-tagged preset
+reference for the target sex+family, the same "borrow an already-valid reference instead of
+constructing one" principle as §3h's addendum, one level up.
+
 ### 2a. Post-build: a genuine ENGINE FUNCTION can work where a raw property write can't
 
 Two unrelated properties on the composite component both showed the same dead-end signature
@@ -208,6 +236,17 @@ function may already exist right next to the property that didn't.
   reading an unfamiliar struct: a plain script table (`{ FieldName = "value" }`) works directly as
   the argument, no struct-drilling needed for the write direction, the same way simple math
   structs (a 3D vector, as `{X=,Y=,Z=}`) already do.
+- **A function named like "clear/empty/reset" does not necessarily clear the specific state you
+  expect.** A mesh component's own documented "clear override materials" function was called
+  expecting it to remove a per-instance material override left behind by an earlier customization
+  step (so a fresh default would show through again) — the call raised no error, but a follow-up
+  probe of the actual material list showed the SAME override, at the SAME slot, completely
+  unchanged. Whatever that function actually resets, it is not the specific per-slot override this
+  case needed cleared. The fix that actually worked: explicitly set the correct value onto the
+  known slot index directly, rather than trusting a "clear" call to put things back to a state that
+  can then be freshly re-derived. Same underlying lesson as the boolean-query bullet above — a
+  function's NAME is a hint about intent, never proof of exact behavior; verify with a real
+  before/after readback of the specific state you care about.
 - **Bracket-indexing an array-of-structs also returns a wrapper that needs unwrapping** — not just
   arrays of object references (already known: indexing returns a remote-param wrapper, not the
   element itself, fixed by calling an unwrap method on it). The exact same wrapper-and-unwrap
@@ -746,6 +785,20 @@ tells you its signature; it proves nothing about whether calling it is safe.** T
 live call to a newly-discovered engine function as a real crash risk regardless of how reasonable
 the theory behind it is, especially for anything that mutates a live pawn's customization/
 composite state — save first, or accept the game may need a hard restart.
+
+**Addendum, confirmed later: the crash risk here can be specifically about CONSTRUCTING a fresh
+struct argument from a plain script table, not the function call itself.** The same crashed
+function was called again, months later, with the identical signature and a genuinely different
+theory: instead of building a brand-new one-field struct table by hand for the tag argument (the
+approach that crashed originally), the LIVE, already-valid struct value returned by that class's
+own matching getter was passed straight back in as the argument. This time the call returned
+cleanly — no crash, confirmed via before/after readback of the property it's supposed to change.
+(Separately, in that later test, the call still didn't achieve what it was invoked FOR — see §2's
+own addendum above — but it stopped being a crash risk.) **When a setter takes a custom struct and
+a same-shape value is obtainable from a getter on the same object, try passing the GETTER's own
+value back through before constructing a fresh one by hand** — a freshly-built script table may be
+memory-shaped subtly differently from a real engine-constructed instance of the same struct type,
+and that difference can be exactly what a native function trusted enough to skip validating.
 
 ### 3i. A runtime transform call on a Static-mobility component silently no-ops visually
 The call **succeeds** (returns fine, the actor's own logged position updates correctly) but the
