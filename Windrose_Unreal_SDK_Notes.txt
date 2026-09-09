@@ -428,3 +428,97 @@ format. It was rejected anyway: its packaging step has no Python or commandlet h
 it means manually clicking through Editor dialogs for every template, in place of this document's
 scriptable command-line packaging step — trading a fast, automatable step for a slower manual one
 with no actual reduction in effort. Worth knowing about so it doesn't get re-evaluated from scratch.
+
+## 10. Authoring a genuinely NEW native class (not just a new data-only asset), confirmed live
+
+Everything above covers authoring new instances of the game's own EXISTING data classes (a new
+outfit-params asset, a new body-type list, and so on) — genuinely new content, but built on classes
+the game already has compiled. This section covers a different, bigger capability: authoring a
+brand-new class that derives from one of the game's own native ACTOR base classes, so it can be
+turned into a Blueprint, given its own construction defaults, and spawned as a first-class object in
+the running game — not a copy or a hijack of an existing one.
+
+**The key insight, and the whole reason this works at all**: this project's own generated header
+stub for a native class can be reimplemented from scratch — a real, from-scratch C++ definition, not
+just a forward declaration — and compiled into a fresh module, PROVIDED that module is given the
+EXACT SAME module name and class name the real game's own compiled class uses (e.g. reimplementing
+the real character base class under the real game's own module name, not this project's own). A
+Blueprint authored against that reimplementation stores only its script path as a string. At
+runtime, the shipped game's own real, fully-implemented class answers to that exact path — the
+reimplementation only ever needs to exist so the Editor has something to compile and author against.
+This was directly confirmed live: a spawned instance of a Blueprint built this way exercised real
+native behavior (constructing a real subobject) that the from-scratch stub's own minimal constructor
+never creates — proof the real, compiled game class ran, not the stub.
+
+**Setting up the reimplementation**:
+1. Generate a full header dump of the game's own reflected classes the same way §1 describes, if one
+   doesn't already exist from an earlier session — it's a one-time, whole-SDK operation, not
+   something to re-run per class.
+2. Copy the target class's own header (and, transitively, every interface it implements) from that
+   dump into this project's own equivalent module, rather than trying to hand-author it. Two real
+   fixes are needed almost every time:
+   - Any `NoExport` specifier on the class declaration must be REMOVED. That specifier tells the
+     header tool "a real implementation exists elsewhere, don't generate normal reflection glue" —
+     true in the real engine build, not true here, where this IS the only implementation the local
+     module has.
+   - Any interface header carried over from a DIFFERENT real module than the one being
+     reimplemented will still have THAT module's own API export macro baked in (e.g. a module named
+     `Foo` exports symbols as `FOO_API`). Consolidating several such headers into one local module
+     means replacing every mismatched macro with the local module's own — leaving one unfixed
+     produces real compile errors that can cascade into confusing, unrelated-looking "precompiled
+     header" failures on other files in the same build.
+3. Every member field that's a POINTER to some OTHER class the reimplementation doesn't itself need
+   (never read, never written, never instantiated) still needs a minimal, valid stub declaration
+   somewhere the header tool can see it — a bare forward declaration is not sufficient for a
+   reflected property, even one that's never touched. A single file of trivial one-line stub classes,
+   each deriving from whatever real engine base is most plausible for its name, covers this cheaply;
+   the exact base doesn't matter since nothing here is ever instantiated.
+4. Real interfaces the target class implements are usually much less work than they look. Read each
+   one's own header directly rather than assuming: many native-only interfaces turn out to declare
+   ZERO methods in the reflected surface at all (satisfied automatically just by inheriting from
+   them), and even a "real" one from a standard engine subsystem (an ability-system-style interface,
+   say) usually needs only one trivial one-line accessor. Confirm this per-project rather than
+   budgeting for a large implementation effort up front.
+5. A reimplemented class that references a standard engine subsystem (an ability/attribute system,
+   for instance) may need that subsystem's own PLUGIN enabled in the project file, not just its
+   module linked in the build script — a module can link and compile successfully while the Editor
+   still fails to LOAD the resulting binary at runtime if the plugin providing one of its own
+   transitive dependencies was never enabled. A "the compiled module could not be loaded" error at
+   Editor startup, after a clean compile, is the signature of exactly this.
+
+**Authoring, cooking, and packaging the Blueprint** follows §2/§3/§9 exactly as already described —
+create it from the reimplemented native class the same scriptable way any other new asset gets
+created, cook it as a single package, package it the same way. One thing NOT worth spending time on:
+baking appearance or other construction-time state onto the new Blueprint's own class defaults if
+that state lives on a property marked `Transient` in the real class. A `Transient` property cannot
+survive a cook by any authoring route — it was never a limitation of the DataAsset-vs-Blueprint
+technique, it's a property-level fact true regardless of how the class is authored. Anything genuinely
+`Transient` still has to be set live, after the object already exists, the same way this whole
+document's "no live game process involved" content always eventually meets the live game at the very
+end.
+
+**Two real gotchas hit getting a first working example spawned, both worth checking before assuming
+a genuinely new native-class Blueprint is broken**:
+- **The new class must derive from something the SHIPPED game actually has.** A pak ships content,
+  never compiled code — if the new Blueprint's parent class lives in this project's own module (the
+  reimplementation's own name, rather than the real game module the reimplementation was built to
+  match), the shipped game has no way to resolve that parent at all, and the whole Blueprint silently
+  fails to load with no useful error beyond "class unresolved." The fix is always the same: reparent
+  to the real module path from step 2 above. A genuinely independent way to catch this class of
+  mistake before spending time debugging further: if any other, unrelated third-party mod pak with a
+  Blueprint in it is available, extract and compare its own script-import references against the
+  new one's — a real difference there is the tell.
+- **A Blueprint's generated CLASS and its underlying ASSET are different objects on different
+  resolution paths, and confirming ONE resolves is not evidence the other does.** Reading a
+  package's own reflected class list confirmed a NEW class DOES get indexed by the running game's own
+  asset registry — but under its OWN, class-specific naming convention (this engine's own convention
+  appends a `_C` suffix to a Blueprint's own name to name its generated class), not under the plain
+  Blueprint asset's own bare name. A resolution helper that strips that suffix before querying the
+  registry, on the reasoning that the registry indexes "the asset, not the class," will reliably find
+  an existing DATA asset (which was never tested against a real class path before) while reliably
+  MISSING every genuinely new class — silently, with no error, since the query itself succeeds and
+  simply returns nothing. If a live spawn attempt on a newly-authored class reports "unresolved" even
+  though its pak is confirmed mounted, checking every resolution strategy independently (not just
+  the first one that's tried) rather than assuming the packaging is at fault will usually surface
+  this quickly — the class typically DOES resolve via at least one strategy once the exact naming
+  convention it's actually indexed under is used.
