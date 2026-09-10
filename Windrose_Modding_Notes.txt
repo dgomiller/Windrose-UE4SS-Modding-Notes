@@ -97,6 +97,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 20. A "not yet started" note is a snapshot, not a durable fact
 21. A live reflection probe that resolves cleanly but reads empty can mean the data doesn't exist to read, not that the property path is wrong
 22. Before concluding a live write reverted, rule out that the read is looking at a different object
+23. Resolving a Blueprint's own generated CLASS via the asset registry needs its exact indexed name — not the bare asset name
 
 ---
 
@@ -3236,3 +3237,33 @@ ambiguous) confirmed a genuine revert was ALSO happening independently. But iden
 a real underlying revert are two different bugs that produce the identical surface symptom ("read
 back empty/unchanged"), and only one of them needed a whole new investigation to explain — ruling
 out the cheap, purely-logging explanation first would have saved that detour.
+
+## 23. Resolving a Blueprint's own generated CLASS via the asset registry needs its exact indexed name — not the bare asset name
+
+A resolution helper that already worked reliably for one kind of object (a plain data asset) failed
+silently and consistently for a different kind (a Blueprint's own class) — no error, just a query that
+returns nothing, indistinguishable from "this path genuinely doesn't exist" unless compared directly
+against a path that's known to work.
+
+**The distinction that matters**: a Blueprint asset and the actual CLASS it generates are two separate
+objects, reachable through two different resolution paths — resolving one is not evidence the other
+resolves too. This engine's own convention names the generated class by appending a suffix to the
+Blueprint's own name (well-documented, not project-specific) — and the asset registry indexes that
+generated class under ITS OWN suffixed name specifically, not under the Blueprint's bare name. A
+resolution helper that strips the suffix before querying the registry — on the reasoning that "the
+registry indexes the asset, not the class" — is backwards for this exact case, and will reliably miss
+every class path while still working for a plain data asset (which never had a suffix to strip, so the
+bug is invisible until something with an actual generated class is tested).
+
+**Why this specific bug survives so easily**: if every test case up to this point happened to be a
+plain data asset, the stripping step is a complete no-op every single time — nothing about earlier
+testing would ever surface the mistake. It only shows up the first time something with a genuinely
+different object shape (a class, not a plain asset) gets resolved through the same helper.
+
+**How to actually find it**: build a diagnostic that tries every plausible resolution strategy
+independently and reports each result, rather than one that stops at the first success (which is what
+production code should do, but is exactly the wrong shape for chasing a resolution mystery). Run it
+side by side on the failing path and a known-working one of a DIFFERENT object kind — the direct
+comparison (one strategy succeeds only with the suffix intact, fails only when it's stripped) usually
+makes the actual bug obvious in a single pass, rather than needing to reason about the registry's own
+indexing convention from documentation alone.
