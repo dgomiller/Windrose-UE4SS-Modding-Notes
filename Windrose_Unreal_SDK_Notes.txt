@@ -591,3 +591,80 @@ supply for free, silently absent on a class built from nothing — which makes e
 cheap to fix once found, but means expecting them to be discovered as a batch up front (rather than
 one at a time, each only visible once the previous one stops masking it) is the wrong expectation to
 set going in.
+
+---
+
+## 12. Baking a fix instead of writing it at runtime: an inherited component's own defaults, and a new class-reference retarget technique
+
+Section 11 catalogued several gaps that all had the same shape: a real donor's own class defaults
+supply something a from-scratch class doesn't. Most of those can be patched at runtime, after the
+object already exists. Two of them — the actual Animation Blueprint driving a skeleton, and a mesh
+component's render offset relative to its collision capsule — turned out to have no safe runtime fix
+available at all, only a safe author-time one. This section covers finding and using that author-time
+path, including a new technique this project had never needed before: retargeting a hard CLASS
+reference, not just a plain object reference.
+
+**First, a genuinely useful shortcut: an inherited native component may already exist on a from-scratch
+class's own CDO, with no C++ work needed at all.** A from-scratch reimplementation of a native actor
+class, built lean (no custom subobjects created in its own constructor, exactly as this whole document's
+own §10 describes), does not necessarily mean every component is missing. A component the class inherits
+from a common ENGINE base (not something the target game's own class introduces) is typically created by
+that base class's OWN constructor, unconditionally, regardless of what any subclass's constructor does
+or doesn't do. Before assuming a missing component needs new C++ and a recompile, check directly:
+load the Blueprint's generated class, get its default object, and read the property by name
+(a generic reflected property read, not a Blueprint-only accessor) — if it's already a real, valid
+object, the fix is a pure content change, not a code change at all.
+
+**Baking a plain-value property onto that inherited component's CDO survives a Blueprint compile —
+confirmed, not assumed.** Set the property, compile the Blueprint, then immediately re-read the value
+fresh off the (possibly newly regenerated) generated class's own default object, before trusting the
+write. This settles a real, previously-open question for this kind of project: whether a property
+override on an INHERITED (not Blueprint-authored) component genuinely persists as a real per-Blueprint
+default through a compile, the same way it would for a component the Blueprint's own construction script
+added itself. It does.
+
+**A class reference needs a genuinely different retarget technique than every prior worked example in
+this document.** Every earlier retarget here (§4, §7, §8) touches a single soft-object-reference VALUE
+in place — read the cooked asset, find the property, replace its value, write, done. A class reference
+(a "which class should this be" field, not "which specific instance") is not stored that way at all: it
+resolves through the package's own IMPORT TABLE, an entry describing an external object this package
+depends on. If the authoring project has no access to the real destination asset (the same fundamental
+limitation behind every retarget technique in this whole document — only reflected structure, never the
+actual game's own content), a placeholder is unavoidable, but the fix on the cooked output looks
+different:
+1. Author with any real, resolvable placeholder class of the correct type (a trivial one-line stub is
+   enough, following this whole document's own pattern for satisfying a reflected requirement cheaply).
+2. Cook normally.
+3. On the cooked output, read the export's property directly and confirm it serializes as an object
+   reference whose value is an index into the import table (not a soft-path value). Find which import
+   entry that index currently points at.
+4. Rather than editing that import entry in place (risky — other exports in the same package may
+   reference other entries in the same table by position, and disturbing the table's shape is a good
+   way to break something unrelated), ADD two new entries at the end of the table instead: one
+   package-type import describing the real destination asset's own path, and one class-type import
+   describing its generated class, parented to that new package import.
+5. Repoint the property's own reference at the newly added class import, write, and verify by reloading
+   the file fresh and reading the same property back.
+This is a heavier edit than a single-field retarget, but no riskier in practice — confirmed structurally
+valid via the same container-inspection tooling this document's own packaging step already uses, and
+confirmed correct LIVE: the referenced class actually drove the object's behavior at runtime with no
+further intervention needed.
+
+**One process gotcha specific to this technique**: cooking a package OVERWRITES any prior byte-level
+retarget on it. If a second, unrelated property also needs baking after the class-reference fix is
+already applied, and that requires re-cooking, the class-reference retarget must be reapplied to the
+FRESH cook before packaging — it does not carry over. Treat "cook, then retarget" as one atomic unit
+that has to be redone together, every time, not a one-time step.
+
+**A render-offset symptom that looks like a physics problem may not be one.** A character appearing to
+float above where it's actually standing, while its own movement component reports completely normal
+gravity/movement-mode values (i.e., the collision capsule genuinely believes it's correctly grounded),
+points at the mesh's own relative transform, not physics. The near-universal convention across
+character-based games (present in the base engine's own reference templates) is that the render mesh's
+own position is offset downward from its collision capsule's origin by roughly the capsule's own
+half-height, so the character's visual feet align with the capsule's actual base rather than floating at
+its center. A from-scratch class that never sets this explicitly defaults to zero offset — visually
+identical to "floating," with a totally ordinary, correctly-configured movement component underneath.
+Confirm directly (read the capsule's own half-height, read the mesh's own relative offset, or diff the
+mesh's world position against the actor's own) before spending time on movement-component tuning that
+was never actually wrong.
