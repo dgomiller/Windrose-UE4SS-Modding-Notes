@@ -3267,3 +3267,93 @@ side by side on the failing path and a known-working one of a DIFFERENT object k
 comparison (one strategy succeeds only with the suffix intact, fails only when it's stripped) usually
 makes the actual bug obvious in a single pass, rather than needing to reason about the registry's own
 indexing convention from documentation alone.
+
+## 24. This game's AI runs a modern State Tree, and its compiled-tree reference is populated at runtime, not baked as a class default
+
+An AI NPC's controller in this game exposes a `StateTreeComponent` (a modern Unreal State Tree), NOT
+the classic Blackboard + Behavior Tree combo. The controller still carries an inherited `Blackboard`
+property from its engine base class — it's dead weight here, State Trees don't use it, and probing it
+is a dead end.
+
+**Where the actual behavior comes from, and why a runtime-spawned NPC can end up with none of it:**
+
+- `StateTreeComponent.StateTreeRef.StateTree` is the *compiled tree asset* the AI runs. On the
+  controller's own class default object this field reads **null** — it is populated at runtime during
+  the normal spawn/possess sequence, not serialized into the class.
+- `StateTreeComponent.Params` is a DataAsset holding a `Map<GameplayTag, {StateTree}>` — the AI
+  selects its active tree out of this map by a gameplay tag, and a separate "state changed" hook
+  (also tag-keyed) switches trees as the AI's situation changes.
+- A specific pawn-parameters DataAsset, plus a couple of generic agent/memory DataAssets on sibling
+  components, feed the tree at tick time. If you spawn the pawn with `SpawnActor` and wire those
+  references in a *deferred pre-possess window*, and that window's work (including resolving/loading
+  the tree asset itself) hasn't completed by the time possession happens, the tree never initializes:
+  `IsRunning()` stays false and the run-status enum sits at a non-started value, versus a
+  level-placed NPC of the same class whose tree is running with a valid asset reference.
+
+**Native levers, if you do need to force a tree onto a runtime-spawned controller** (all
+BlueprintCallable): `Character:ActivateCharacter()` (no parameters — the "bring this NPC fully online"
+step a level-placed actor gets for free); `StateTreeComponent:SetStateTree(tree)` and
+`:SetStartLogicAutomatically(bool)`; `AIController:StartLogic()` / `StopLogic()`. The explicit graft
+sequence `StopLogic()` → `SetStateTree(tree)` → `StartLogic()` (verified by reading the tree back
+afterward) works across unrelated AI types — a calm-behavior tree from one creature family will run on
+another's controller.
+
+**Getting these signatures without blind probing**: a reflection-dumping tool that reads a shipped
+game's compiled binaries (or a full-memory process minidump) into JSON gives you the exact class
+layouts, property offsets, and `UFUNCTION` signatures directly. Live reflection probing only ever
+shows values on whatever instance you happen to probe, and can itself crash on a large native class's
+function list — dump the binary instead when you need the full picture.
+
+**The process lesson that cost the most here**: a hot-reload of a Lua mod does NOT re-copy files from
+your working tree to the game's live mod folder — only an explicit copy does — and firing several
+hot-reloads in quick succession *wedges the delayed-callback / timer system*: synchronous code keeps
+running on every subsequent test, but anything scheduled on a delay silently stops firing, with no
+error. A fix that "doesn't work" under repeated hot-reloads can work perfectly on a clean game
+restart. Always deploy the file for real and validate a timing-sensitive fix on an actual restart
+before concluding it failed — an entire multi-session "the engine won't let us do this" wall here
+turned out to be a correct fix that the test harness never actually ran to completion.
+
+## 25. An uncatchable native crash chased for a full session — it was a use-after-free in a logging helper, not the thing everyone blamed
+
+Symptom: a spawn console command placed its actor fine, then the game crashed with a dump roughly two
+seconds later, reproducibly. It was blamed for most of a session on the composite-mesh rebuild being
+"probabilistically unstable" (a claim old code comments already made), and the project came close to
+abandoning the entire runtime approach for a much heavier offline-authoring pipeline to avoid it.
+
+**Triage that reframed it**: parse the minidump for the exception code, the faulting address, and
+which loaded module's address range contains that address (Microsoft's minidump structures are simple
+enough to walk in ~80 lines of script, no debugger or symbols needed). Every crash landed at the
+*identical offset inside the script-host DLL* — not the game's own executable. That single fact moves
+the investigation from "engine or content race" to "the shape of a call we're making into the host."
+
+**Actual root cause**: the command handler's little `say(msg)` helper both printed and wrote the line
+to the console command's *output-device object* (the handler's `Ar`-style argument). That same `say`
+closure was then threaded down through the spawn logic into a **delayed timer callback** that runs
+~2s later — by which point the console command has long since returned and the output-device object
+has been destroyed. Calling a method on the freed object is an access violation, and it happens
+inside the host's reflection/marshalling code, so a `pcall` around the call never sees it (a native
+access violation is not a catchable script error).
+
+**Rule**: never capture a console command's output-device / archive object in any closure that can
+outlive the command handler's own synchronous return. A `say()`-style helper that gets passed into
+deferred, polled, or timer-driven code must print and/or file-log only — never touch the command
+output object.
+
+**How it was actually proven**: an A/B against a sibling command whose `say` helper printed but did
+*not* write to the output object — it ran the identical downstream spawn-and-rebuild code with zero
+crashes. Same composite rebuild, same everything, one line different.
+
+**Two supporting lessons from the same chase:**
+
+- The script host truncates its own log file on every game launch, so a crash's last lines before
+  death are gone the moment the game relaunches — which is what made this a multi-hour guessing game.
+  Add your own append-only log file for anything you're actively crash-chasing. But do **not**
+  implement it by wrapping the global `print` — per-line file I/O on the game thread during heavy work
+  (a mesh rebuild, a big component sweep) can itself perturb timing enough to surface a *different*
+  race. Hang the sink off your existing "always log this" helper and explicit calls instead.
+- A soft asset reference touched only deep inside a spawn (a specific clothing mesh, a behavior
+  asset) can be a genuinely *cold* reference that does not finish loading synchronously on its first
+  use in a session — the dependent step then silently falls through to a worse fallback. Firing a
+  throwaway resolve of that asset early in the spawn function, well before the code that needs it,
+  is a clean fix. The tell is "it was wrong on the first spawn after launch, then correct after a
+  reload."
