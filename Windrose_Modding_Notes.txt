@@ -3357,3 +3357,72 @@ crashes. Same composite rebuild, same everything, one line different.
   throwaway resolve of that asset early in the spawn function, well before the code that needs it,
   is a clean fix. The tell is "it was wrong on the first spawn after launch, then correct after a
   reload."
+
+## 26. A third-party cosmetic replacer mod silently broke a live customization tool AND caused an intermittent native crash — check installed content mods before chasing an engine theory
+
+Two symptoms surfaced independently, weeks apart: (1) a specific body's proportions couldn't be
+changed at all, not even in the game's own built-in character creator; (2) a specific sex-change
+function crashed intermittently with a low-level memory-copy access violation, on some source bodies
+but never others. Both were chased as engine/API limitations for a long time.
+
+**Actual cause**: a separately-installed, third-party nude/cosmetic replacer mod was silently
+overriding exactly one specific character mesh package with a re-exported nude version. Two
+consequences fell straight out of that:
+
+- Nude/cosmetic mesh re-exports routinely drop data the original asset carried that isn't visually
+  obvious in a modeling tool — in this case, every body-shape morph target. The character creator's
+  sliders for that body genuinely had nothing left to deform, on either that one specific mesh only.
+- A sex-swap function that copies skeletal mesh data between the current and target sex assumes the
+  meshes it's copying between match the game's own original topology/vertex layout. A replacer mesh
+  with even a slightly different vertex count is exactly the shape of mismatch that produces a raw
+  memory-copy access violation deep in the engine — explaining why the crash was probabilistic (only
+  hit on the specific body the replacer touched, not every sex-swap) and why it looked identical to a
+  logic bug in the mod being developed, when it was actually a foreign asset conflict.
+
+**The generalizable lesson**: when a customization/animation feature that should be a core, working
+engine capability instead behaves as "silently broken" or "sometimes crashes for no discernible
+reason," check what OTHER content mods are installed and specifically whether any of them replace a
+base-game mesh the broken feature touches — before spending real time on an engine-limitation theory.
+Content mods installed through a mod manager often live in a completely different folder than the
+mods you're actively developing, so they're easy to forget are even present. A quick way to check: a
+pak-listing tool that shows which package paths a `.pak`/container claims to own; if a replacer mod
+claims the exact mesh package the broken feature uses, that's your answer before you write a single
+line of diagnostic code.
+
+## 27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
+
+A recurring goal across two separate investigation passes: give walking AI-controlled NPCs deliberate,
+per-instance body-shape variety at runtime (as opposed to picking from a small number of pre-baked
+body meshes). Every reachable lever was tried, twice, months apart, and all of them share one
+signature: **the write reports success, reads back correctly, and even persists across further
+reads — but the rendered mesh never visibly changes.**
+
+Levers tried, all confirmed dead for this purpose:
+- Overriding the reference to the body-shape parameter asset before the character's visual is built.
+- Driving the same shape-parameter API the in-game character creator itself uses, including the
+  creator's own "start edit / apply changes / rebuild visual" session sequence — the exact calls a
+  human editing their own character would trigger.
+- Writing the underlying raw blend-shape (morph target) weights directly on the skeletal mesh
+  component, by their real, discovered names.
+- Writing a plain per-instance shape vector exposed on the animation instance itself, confirmed via
+  live inspection to differ between two NPCs sharing the identical body mesh (proving it CAN differ
+  per-instance) — writing it at runtime still produces no visible change.
+
+**Root cause, confirmed via the engine's own reflected class list**: the game uses a modern
+node-graph-based rig/animation system (Control Rig) to compute body deformation, and the specific
+node responsible reads the shape parameters as part of the character's Animation Blueprint graph —
+almost certainly on a one-time Initialize/BeginPlay event inside that graph, not on every frame. That
+graph is compiled into the shipped asset; only the generated class ships, never the editable node
+graph, so there is no reflected "recompute now" function to call, and no runtime API can force that
+one-time evaluation to happen again after construction. A reflection/dumping tool can tell you a
+system like this exists and what its outward-facing class/function surface looks like (useful for
+confirming the theory, as it was here), but it cannot show you the internal wiring of a specific
+graph instance, because that information is not reflection data at all — it's compiled logic stripped
+out at cook time.
+
+**Practical implication**: if body-shape variety needs to exist at all for an NPC family built this
+way, it has to come from picking among different PRE-BUILT body meshes/classes (each with its own
+construction-time-baked shape) rather than deforming one shared mesh at runtime. Don't re-attempt this
+class of runtime shape override without either the actual editable rig graph in hand, or a
+genuinely different, deeper mechanism than anything reachable through the object/property reflection
+layer.

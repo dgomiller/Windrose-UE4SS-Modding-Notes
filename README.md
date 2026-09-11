@@ -35,6 +35,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 23. Resolving a Blueprint's own generated CLASS via the asset registry needs its exact indexed name — not the bare asset name
 24. This game's AI runs a modern State Tree, not a Blackboard/Behavior Tree — its compiled-tree reference is populated at runtime, not baked; plus the native levers to force a tree onto a runtime-spawned controller, and why a hot-reload never re-deploys your files
 25. An uncatchable native crash chased for a full session — it was a use-after-free from capturing a console command's output object in a delayed timer callback, not the mesh rebuild everyone blamed
+26. A third-party cosmetic replacer mod silently broke a live customization tool AND caused an intermittent native crash — check installed content mods before chasing an engine theory
+27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
