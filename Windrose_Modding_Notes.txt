@@ -34,6 +34,7 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     3o. Comparing two independently-fetched object handles with `==` is unreliable, even for the identical underlying object
     3p. A property write can succeed with zero error yet have no lasting (or any) visible effect, if a native settings/params system re-asserts it
     3q. How argument counting actually works for a raw UFunction call with a return value
+    3r. A count-limited `gsub` on a "Package/Path.AssetName"-shaped string only fixes half of it
 4. Persisting and restoring actor state across a world load
 5. Peace / faction mechanics
 5b. Movement: THIS GAME DOES NOT USE THE UE NAVMESH
@@ -952,6 +953,27 @@ than discovered by walking every field) instead of a blind generic walk. Treat "
 as scoped to a class's own fixed property list, not as a blanket guarantee for every struct any API
 might hand back — especially one whose shape is documented to vary by the type of thing it
 describes.
+
+### 3r. A count-limited `gsub` on a "Package/Path.AssetName"-shaped string only fixes half of it
+Any UE asset reference read back through Lua/UE4SS typically prints as
+`/Game/Some/Path.AssetName` — the trailing `.AssetName` repeats the SAME final name that already
+appears at the end of the path portion before the dot. This matters the moment you try to derive a
+SIBLING asset's path by substituting one token for another in an existing path string (a common
+pattern: swap "_Default_" for "_Variant_" to find a related asset without a full lookup table for
+every variant). Doing that substitution with a replacement-count LIMIT — `gsub(s, pattern, repl, 1)`
+in Lua, or the equivalent "replace first occurrence" call in any language — only fixes whichever
+occurrence comes first in the raw string (the path portion), and silently leaves the SECOND
+occurrence (inside `.AssetName`) unchanged, because Lua's count limit applies to the total number of
+matches replaced across the WHOLE string, not once per logical "section." The result is a
+syntactically valid but internally MISMATCHED path — package half says the new variant, asset-name
+half still says the old one — that fails to resolve with no error explaining why, since it looks
+like a perfectly normal (if wrong) asset path right up until the resolve call returns nothing.
+**If a substitution needs to apply consistently across a `Package/Path.AssetName`-shaped string,
+never cap the replacement count — let `gsub` (or equivalent) replace every occurrence.** This one
+was hiding inside an already-shipped, previously-"working" helper for months — it never threw an
+error, it just silently fell back to a default/no-op result every time the substitution path was
+actually needed, which is what let it go unnoticed until a new caller finally exercised it enough to
+reveal the pattern.
 
 ---
 
