@@ -35,6 +35,9 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     3p. A property write can succeed with zero error yet have no lasting (or any) visible effect, if a native settings/params system re-asserts it
     3q. How argument counting actually works for a raw UFunction call with a return value
     3r. A count-limited `gsub` on a "Package/Path.AssetName"-shaped string only fixes half of it
+    3s. Touching a genuinely new property/function shape can crash INSIDE the mod framework's own DLL, not the game — and a from-scratch minidump parser can prove it without a debugger installed
+    3t. A "starting step" breadcrumb printed through a project's own debug-gated log wrapper is not actually unconditional
+    3u. Repeatedly re-walking the SAME native-array-wrapped Lua value in a tight loop can crash inside the mod framework's own reflection bridge, at a DIFFERENT instruction each time
 4. Persisting and restoring actor state across a world load
 5. Peace / faction mechanics
 5b. Movement: THIS GAME DOES NOT USE THE UE NAVMESH
@@ -974,6 +977,89 @@ was hiding inside an already-shipped, previously-"working" helper for months —
 error, it just silently fell back to a default/no-op result every time the substitution path was
 actually needed, which is what let it go unnoticed until a new caller finally exercised it enough to
 reveal the pattern.
+
+---
+
+### 3s. Touching a genuinely new property/function shape can crash INSIDE UE4SS.dll itself, not the game — and a from-scratch minidump parser can prove it without a debugger installed
+Two calls built in the same session — one invoking a real, existing engine UFUNCTION directly (a
+plain no-argument call, about as simple a shape as it gets), one writing two ordinary
+`BlueprintReadWrite` float properties on an `ActorComponent` — both **crashed the game natively**,
+confirmed live. Neither the class, property, nor function name was stale or wrong (independently
+re-confirmed against the current build's own SDK dump before assuming otherwise).
+
+With no debugger installed on the machine, a ~80-line parser written directly against the
+documented Microsoft `MINIDUMP_HEADER`/`MINIDUMP_DIRECTORY`/`MINIDUMP_EXCEPTION_STREAM`/
+`MINIDUMP_MODULE_LIST` binary structures was enough to answer the one question that mattered: read
+the stream directory, pull the exception code + faulting address from the Exception stream, then
+walk the Module List to find which loaded module's base/size range contains that address. No
+symbols needed for this much — just "which module." All 3 crash dumps from that session
+(`EXCEPTION_ACCESS_VIOLATION`, 0xC0000005) landed inside **`UE4SS.dll` itself**, at nearly
+identical offsets — NOT inside the game's own executable.
+
+**That one fact reframes the whole investigation.** A crash landing in the GAME's own exe usually
+means a content/asset-specific problem. A crash landing in **the mod-loading framework's own DLL**
+means its generic Lua↔native reflection bridge is failing on this specific property/function
+SHAPE — something about how it's declared trips a bug in the generic marshaling code, independent
+of whether the calling script logic is correct.
+
+**General lesson: when a crash's own dump can be read (even without a real debugger), always check
+which MODULE the fault landed in before theorizing about the script-level cause.** A fault inside a
+mod-loading/reflection layer points at "this specific reflection shape isn't safe to touch this
+way," not at whatever business logic the script was trying to express — a very different, and much
+narrower, class of problem to isolate. Practical follow-up once a combined command is confirmed to
+crash: split it into one command per individual operation and log a "starting attempt" line
+immediately BEFORE each risky call, not just after — a native access violation leaves ZERO further
+log output, so the isolated commands' own pre-call log line is the only way to know which specific
+operation was running at the moment of a subsequent crash.
+
+### 3t. A "starting step" breadcrumb printed through a project's own debug-gated log wrapper is not actually unconditional — verify the wrapper itself before trusting its silence as evidence
+A whole diagnostic effort — per-step "starting step N" breadcrumbs added specifically to catch
+which step a native crash died in (see 3s above for why that matters) — turned out to have been
+printing NOTHING for its entire lifetime. The project's own logging helper was gated behind a
+verbosity config flag that happened to be off in the deployment being tested. Multiple real crash
+investigations were carried out against a log tail that LOOKED like it stopped mid-function (no
+"starting step" line for the step after the last visible output), when in fact none of those lines
+had ever been capable of printing at all — on the success path or the crash path alike. This
+produced a plausible-looking but wrong crash localization before the gate itself was found.
+
+**General lesson: before trusting a diagnostic breadcrumb's ABSENCE as evidence of where something
+died, confirm the breadcrumb itself is capable of printing unconditionally.** A project-wide
+logging helper gated behind a debug/verbosity flag is exactly the kind of thing that silently
+defeats purpose-built crash-diagnostic instrumentation added later without anyone re-checking that
+assumption — the fix costs nothing (a small, deliberately ungated print wrapper scoped to just the
+diagnostic in question) once found, but the gate being invisible in the log itself (a false-valued
+config flag, not a printed line saying "logging disabled") can let it go unnoticed through multiple
+full investigation cycles.
+
+### 3u. Repeatedly re-walking the SAME native-array-wrapped Lua value in a tight loop can crash inside the mod framework's own reflection bridge, at a DIFFERENT instruction each time — not one fixed bad line
+A read function called a shared helper once per each of 4 related sub-items, each call
+independently re-walking the SAME underlying engine array from index 1 through n via bracket
+indexing. A live crash dump, cross-referenced against per-index checkpoint breadcrumbs, caught one
+array index being read CLEANLY during the first walk, then crashing on that EXACT SAME index
+microseconds later during the very next walk — with nothing else in the program having changed in
+between. Collapsing the redundant re-walks into a single pass (build a lookup map once, read all 4
+sub-items from it) was a real, independently-justified algorithmic fix — but crashes on the same
+general class of function kept recurring anyway, eventually confirmed via several more minidumps to
+be landing at DIFFERENT offsets within the SAME native module each time, across genuinely unrelated
+call sites (a completely different read function, and even long-stable, previously-untouched code).
+
+That "crashes at different instructions within one module, not one fixed line" pattern is the
+classic signature of heap/memory corruption (a use-after-free or similar) rather than one specific
+bad call — the actual defect happens at one point, but the crash surfaces later, wherever the
+already-corrupted memory next gets touched, which can look like "different locations" even though
+there is one root cause. **What actually resolved it**: the project's own vendored copy of the mod
+framework, built from its own source tree rather than a separately-installed community binary,
+turned out to be over 100 commits behind upstream. Scanning that commit range turned up several
+real Lua-bridge stack/memory-corruption fixes matching this exact symptom class — including another
+game's own bug report for "intermittent crash," the same vague, unlocalizable symptom. Pulling the
+update, resyncing the framework's own git submodules (needed separately after the parent pull,
+since submodule pointers move too), and rebuilding meaningfully reduced crash frequency in the same
+test session, though it did not eliminate every occurrence.
+
+**General lesson: treat a vendored native dependency's own version staleness as a real, checkable
+crash hypothesis before assuming a native-module crash must be something your own script is doing
+wrong** — especially once a crash's own signature (same module, varying instruction) stops looking
+like a single fixable call site.
 
 ---
 
