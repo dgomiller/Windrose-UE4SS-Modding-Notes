@@ -37,6 +37,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 25. An uncatchable native crash chased for a full session — it was a use-after-free from capturing a console command's output object in a delayed timer callback, not the mesh rebuild everyone blamed
 26. A third-party cosmetic replacer mod silently broke a live customization tool AND caused an intermittent native crash — check installed content mods before chasing an engine theory
 27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
+28. A deferred-spawn transaction has a real window for assigning properties before an actor's own construction-time subsystems initialize — use it instead of patching a live instance afterward
+29. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

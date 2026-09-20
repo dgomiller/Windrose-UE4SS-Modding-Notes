@@ -38,6 +38,10 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
     3s. Touching a genuinely new property/function shape can crash INSIDE the mod framework's own DLL, not the game — and a from-scratch minidump parser can prove it without a debugger installed
     3t. A "starting step" breadcrumb printed through a project's own debug-gated log wrapper is not actually unconditional
     3u. Repeatedly re-walking the SAME native-array-wrapped Lua value in a tight loop can crash inside the mod framework's own reflection bridge, at a DIFFERENT instruction each time
+    3v. A shared loop-counter variable captured by a closure scheduled for LATER execution reads whatever the counter is AT THAT LATER TIME, not the value it held when the closure was created
+    3w. A "swap which system drives this instance" property write can silently apply to the PROPERTY but not the LIVE INSTANCE, if that instance was already constructed under the old value
+    3x. `GetActorBounds`'s aggregate extent can be wildly inflated by a particle/effects component attached to the actor, even when the visible mesh's own size is completely ordinary
+    3y. A batch/staggered operation's own completion summary can report how many items it INTENDED to process, not how many actually succeeded
 4. Persisting and restoring actor state across a world load
 5. Peace / faction mechanics
 5b. Movement: THIS GAME DOES NOT USE THE UE NAVMESH
@@ -102,6 +106,12 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 21. A live reflection probe that resolves cleanly but reads empty can mean the data doesn't exist to read, not that the property path is wrong
 22. Before concluding a live write reverted, rule out that the read is looking at a different object
 23. Resolving a Blueprint's own generated CLASS via the asset registry needs its exact indexed name — not the bare asset name
+24. This game's AI runs a modern State Tree, and its compiled-tree reference is populated at runtime, not baked as a class default
+25. An uncatchable native crash chased for a full session — it was a use-after-free in a logging helper, not the thing everyone blamed
+26. A third-party cosmetic replacer mod silently broke a live customization tool AND caused an intermittent native crash — check installed content mods before chasing an engine theory
+27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
+28. A deferred-spawn transaction has a real window for assigning properties BEFORE an actor's own construction-time subsystems initialize — use it instead of patching a live instance afterward
+29. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
 
 ---
 
@@ -1060,6 +1070,101 @@ test session, though it did not eliminate every occurrence.
 crash hypothesis before assuming a native-module crash must be something your own script is doing
 wrong** — especially once a crash's own signature (same module, varying instruction) stops looking
 like a single fixable call site.
+
+### 3v. A shared loop-counter variable captured by a closure scheduled for LATER execution reads whatever the counter is AT THAT LATER TIME, not the value it held when the closure was created
+
+A staggered/paced loop pattern — increment an index, spawn a deferred/delayed callback that uses
+that index, then immediately schedule the NEXT iteration without waiting for the deferred callback
+to actually run — looks correct at a glance but has a real race baked in if the loop variable is a
+plain shared upvalue rather than a fresh local snapshotted per iteration. If the deferred callback
+execution is even slightly delayed (entirely plausible under load — competing asset streaming, a
+busy event queue, anything), several iterations of the outer loop can advance the shared counter
+past its intended value before any of the earlier-queued deferred callbacks actually fire. Each of
+those callbacks then reads whichever value the counter happens to hold AT THE MOMENT IT FINALLY
+RUNS, not the value it was scheduled with — indexing into a list with that now-advanced value comes
+back out of range, silently dropping whatever that iteration was supposed to do. This produces a
+genuinely intermittent, timing-dependent symptom (works fine when the system is idle, drops entries
+unpredictably under load) rather than a deterministic "the same one always fails" bug, which makes
+it easy to misdiagnose as data corruption or a one-off fluke rather than a real, reproducible logic
+error.
+
+**Fix**: snapshot the loop variable into its own fresh local BEFORE scheduling the deferred work —
+`local idx = i` immediately before queuing the callback, then have the callback close over `idx`,
+never the shared `i` upvalue directly. This is the general "closure captures the variable, not its
+value at closure-creation-time" gotcha, but it is easy to overlook specifically in a staggered/paced
+loop shape, since the bug only manifests when the deferred work is slow enough for multiple
+iterations to race ahead of it — a fast/idle test run can pass repeatedly while a real, loaded
+session hits it often.
+
+### 3w. A "swap which system drives this instance" property write can silently apply to the PROPERTY but not the LIVE INSTANCE, if that instance was already constructed under the old value
+
+Some engine subsystems expose a class-reference property that determines which compiled logic
+drives a given instance (a common shape: an actor has a "which controller class should run me"
+field, or a mesh component has a "which behavior graph computes my current state" field). Writing a
+new value to that property after the instance already exists can update the property cleanly — a
+read-back immediately afterward shows the new value — while the actual RUNNING INSTANCE keeps using
+whatever was built from the OLD value, because the underlying object that value controls is only
+ever (re)constructed the first time, not on every property write. The result looks like the write
+"didn't take," even though the property genuinely did change; what didn't change is a separate,
+already-existing object the property merely selects between at construction time.
+
+**The reliable fix, when a real API call exists to force reconstruction, is often riskier than
+the plain property write** (the force-rebuild path is frequently the one to avoid — see the general
+principle in §3l/§3m about invoking unfamiliar UFunctions), so the more robust fix is usually
+architectural: perform the property write BEFORE the instance is ever constructed in the first
+place, inside whatever deferred-construction window the spawn API offers (see the "assign it before
+construction finishes" pattern below, a separate entry), rather than patching an already-running
+instance after the fact. If a bare post-spawn write of this style of property visibly "does nothing"
+even though a read-back confirms it took, check whether the underlying subsystem was already
+initialized by the time the write landed — that is a completely different, and much easier, defect
+to fix than assuming the write itself needs different data.
+
+### 3x. `GetActorBounds`'s aggregate extent can be wildly inflated by a particle/effects component attached to the actor, even when the visible mesh's own size is completely ordinary
+
+A generic "get this actor's full bounding box" call aggregates the bounds of EVERY component
+attached to the actor, not just its primary visual mesh. A particle/effects system attached
+alongside a normal skeletal mesh — a glow, a mist, any decorative effect — can report a bounding
+volume many times larger than the mesh itself, since effects systems often advertise a large
+theoretical extent independent of what's currently visually rendering. Any code that derives a
+"where does this actor's bottom/edge actually sit" measurement from that aggregate bounding box will
+silently inherit that inflation for any actor carrying such an effect, producing a wildly wrong
+offset (an order of magnitude larger than every other actor tested) with no error of any kind — the
+call succeeds and returns a value, it's just the wrong value for the purpose being asked of it.
+
+**A live bone/socket-position query is a far more reliable way to get a real "where do this
+character's feet actually rest" measurement** than an aggregate bounding-box calculation, when the
+skeleton has a bone that reliably sits at ground level in a standing pose — it reads one fixed
+transform rather than aggregating every attached component's own extent, so it's immune to
+whatever unrelated components happen to be attached. It's not a universal drop-in replacement,
+though — a bone-based measurement should be treated as a fallback for when the bounding-box
+approach looks obviously wrong (a sanity-range check against every other measured instance's own
+typical range is a cheap way to detect this), not a blanket replacement for every use of the
+aggregate bounds call, since a bone that reliably marks "ground level" in a standing pose may not
+correspond to the right reference point for every other pose (seated, prone, etc.) a bounds-based
+measurement already handles correctly.
+
+### 3y. A batch/staggered operation's own completion summary can report how many items it INTENDED to process, not how many actually succeeded — making a near-total failure look, in the log, exactly like full success
+
+A multi-item batch operation (particularly a staggered one, spread across several ticks/frames via
+a delayed-callback chain) commonly classifies its input into buckets up front, then reports a
+completion count once every bucket's processing has been scheduled. If the count printed at the end
+is simply the SIZE of each bucket — how many items were classified into it — rather than a live
+tally of how many of those items actually produced a successful result, the two numbers can diverge
+completely without anything catching it: every item can fail (a thrown error, or the underlying
+operation cleanly returning a null/failure result) and the summary will still report full success,
+because it was never actually counting outcomes in the first place. This is compounded when the
+per-item worker function has no failure branch at all — a caught exception or a null result that
+falls off the end of the function with nothing logged means there is no trace ANYWHERE that
+anything went wrong, not even a suppressed/gated one (contrast with §3t, where the trace existed but
+was silenced by a debug flag — here, no trace was ever written for the failure path to begin with).
+
+**General lesson: a batch operation's own final summary line should be built from a counter
+incremented on ACTUAL success, never from the size of the input list it was handed** — and every
+per-item worker function in a batch/staggered pipeline needs an explicit failure branch that logs
+unconditionally (not behind a verbosity flag), even if that branch just records "this one failed,
+here's why," specifically because the success path already has its own logging and it is exactly
+the FAILURE path that a developer forgets to write a branch for, since it doesn't come up during
+ordinary happy-path testing.
 
 ---
 
@@ -3534,3 +3639,54 @@ construction-time-baked shape) rather than deforming one shared mesh at runtime.
 class of runtime shape override without either the actual editable rig graph in hand, or a
 genuinely different, deeper mechanism than anything reachable through the object/property reflection
 layer.
+
+## 28. A deferred-spawn transaction has a real window for assigning properties BEFORE an actor's own construction-time subsystems initialize — use it instead of patching a live instance afterward
+
+A two-phase actor-spawn API (begin the transaction, which constructs the actor and its default
+subobjects without yet running its full construction/begin-play sequence; then finish the
+transaction, which completes construction and starts the actor running) has a genuine window
+between those two calls where properties can be written directly onto the not-yet-finished actor.
+Anything set in that window becomes part of what the actor's own construction-time logic reads when
+it actually initializes — not a value fighting against already-completed initialization, but the
+actual input to it. This is a meaningfully different, and much safer, category of operation than
+writing the same property after the actor already exists and is already running: a bare property
+write that a live, already-initialized instance quietly ignores (see §3w above) can behave
+completely differently — reliably, correctly — when performed inside this pre-construction window
+instead, because there is no already-initialized state for the value to conflict with; the actor's
+own construction logic simply reads whatever is there when it finally runs.
+
+This generalizes well beyond any one specific property. Concretely useful examples: which
+controller/possession class an actor should be given (assigning this in the deferred window is a
+genuine "decide this before spawning" operation, not a live re-possession attempt after the fact,
+which a different class of engine object may not support at all once already running); which
+animation-driving class a mesh component should use (see §3w — the SAME bare property write that
+silently no-ops on an already-running mesh component takes reliably when performed here instead,
+since the mesh's own first real runtime instance hasn't been built yet). The general principle: any
+property that an actor's own construction-time logic consults ONCE, and never re-reads afterward,
+belongs in this pre-finish window if the spawn API offers one — not patched on after the fact and
+hoped to somehow retroactively apply.
+
+## 29. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
+
+When a property write that's supposed to enable some behavior (a possession/controller assignment,
+a movement-driving component, any subsystem gated behind "this needs to be built on top of a
+specific base class") reports success — no error, and a read-back even confirms the new value
+stuck — but produces zero observable change in behavior, there are two very different possible
+explanations that are easy to conflate: either the write needs different data (wrong value, wrong
+timing, wrong companion property also needing to be set), or the target class was never structurally
+capable of using that property at all, no matter what value or timing is used, because it doesn't
+derive from whatever base class actually implements the subsystem in question.
+
+A walk up an object's own class hierarchy (repeatedly asking each class for its immediate parent,
+starting from the object's own leaf class, until reaching the root) directly answers this in one
+cheap, side-effect-free reflection call — comparing the resulting chain against the specific base
+class a subsystem requires (a "possession" system requires deriving from whatever the base
+possessable-object class is; a "movement" system requires deriving from whatever the base
+movement-capable class is) tells you immediately and definitively whether the class is even in the
+right family, before spending further test cycles adjusting the property's value or the timing of
+the write. **General lesson: when a property write that's "supposed to enable X" produces no
+observable effect despite reporting success and surviving a read-back, check the target class's own
+inheritance chain against whatever base class X actually requires before continuing to tune the
+property itself** — a class-hierarchy mismatch produces exactly this "silently does nothing"
+signature, and no amount of retrying the property write will ever fix it, since the object genuinely
+lacks the machinery the property is meant to configure.
