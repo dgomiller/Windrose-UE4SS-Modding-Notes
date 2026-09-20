@@ -112,6 +112,11 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
 28. A deferred-spawn transaction has a real window for assigning properties BEFORE an actor's own construction-time subsystems initialize — use it instead of patching a live instance afterward
 29. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
+30. A binary-asset editing library needs the game's own type-mappings file loaded explicitly, or a native asset silently degrades to an unreadable raw blob
+31. Patching a single package inside an already-shipped Zen/IoStore container, without its original staging tree or a full re-cook
+32. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
+33. A native function call through a script-reflection binding can require stricter argument handling than its own C++ signature promises
+34. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
 
 ---
 
@@ -3690,3 +3695,166 @@ inheritance chain against whatever base class X actually requires before continu
 property itself** — a class-hierarchy mismatch produces exactly this "silently does nothing"
 signature, and no amount of retrying the property write will ever fix it, since the object genuinely
 lacks the machinery the property is meant to configure.
+
+## 30. A binary-asset editing library needs the game's own type-mappings file loaded explicitly, or a native asset silently degrades to an unreadable raw blob
+
+A `.uasset`/`.uexp` editing library (the kind already documented elsewhere in this file for
+retargeting an existing reference) works out of the box for simple, well-known content — plain
+DataAssets, straightforward Blueprint actors — using nothing but its own built-in property-type
+registry. Pointed at a genuinely complex native Blueprint (one that pulls in dozens of the game's own
+exotic, custom component types the library's registry has never seen), every one of those exports
+silently falls back to an unparsed raw byte blob instead of a real, navigable object with named
+properties. This doesn't error — it just means nothing in the file looks readable, and it's easy to
+conclude the asset (or the tool) is broken.
+
+**The fix**: nearly every UE5 game-asset browser/exporter already needs a `.usmap` type-mappings file
+for that specific game to work at all (many UE4SS builds can generate one themselves, via a bundled
+console command wrapping the engine's own mapping-dump function) — and the same file is directly
+usable by a general-purpose `.uasset` editing library too, not just by the browser it was made for.
+Constructing the asset object with that mappings file explicitly supplied (rather than the bare,
+no-arguments constructor) turns nearly all of those previously-opaque exports into properly parsed
+objects with real, named, walkable properties.
+
+**The generalizable lesson**: reach for the game's own mappings file immediately on any base-game
+(not self-authored) asset inspection task, rather than treating an all-raw-export result as evidence
+the tool doesn't work on that file. A library's "it opened but everything is unreadable" failure mode
+is very often exactly this — a missing schema, not a corrupt or unsupported asset — and the fix costs
+nothing once the mappings file already exists for other tooling in the same project.
+
+## 31. Patching a single package inside an already-shipped Zen/IoStore container, without its original staging tree or a full re-cook
+
+The normal offline-asset-editing recipe documented elsewhere in this file (convert Zen to legacy
+format, edit, convert back, repackage) assumes you still have — or can freely regenerate — the full
+staged folder tree the original container was built from. That assumption breaks down for a
+container that shipped long ago and was never kept in staged form: converting it back to legacy
+format to make one small edit can fail outright, because the legacy conversion step commonly
+requires the container to carry its own script-object metadata chunk, which a small, mod-built
+container typically never had in the first place.
+
+That metadata chunk can be synthesized from a full reflection dump of the running game (the same
+kind of dump a binary-reflection tool produces), which unblocks the legacy conversion — but only
+partially: a container converted this way still can't resolve any of ITS OWN mod-authored
+cross-references correctly, because the synthesized metadata has no way to know about names that
+only exist inside that one mod's own package. Every such reference reads back as an unresolved
+placeholder. Editing and reconverting the WHOLE container this way would bake those placeholders in
+as real (garbage) data — destructive, not just cosmetic.
+
+**The technique that actually works**: unpack the original container to its raw, byte-identical
+chunks (a real, exposed feature of at least one Zen/IoStore conversion tool) — this performs zero
+format conversion and so carries zero name-resolution risk, unlike a full legacy round-trip.
+Separately, run the normal edit-and-reconvert recipe on ONLY the one or few packages that actually
+need to change, producing fresh, correctly-built chunks for just those packages (their chunk
+identifiers are deterministic per package path, so the freshly-built chunks land under the exact
+same filenames the original raw dump already used). Substitute just those specific chunk files into
+the unpacked raw set, leaving the manifest and every other chunk — including the container's own
+header chunk — completely untouched, then repack the whole raw set back into a container. A generic
+container-repack step may not itself regenerate every companion file the mounting system expects (in
+this case, a tiny, effectively-fixed placeholder sidecar file the container format still wants
+alongside the main payload) — copying that one file across unmodified from the original,
+already-working build is enough; it isn't specific to the content it accompanies.
+
+**Why this matters beyond convenience**: it turns "the original project for this shipped content is
+gone" from a hard blocker into a routine, low-risk patch — no full re-cook, no rebuilding unrelated
+packages, and (because untouched chunks are copied byte-for-byte) essentially zero chance of quietly
+corrupting content nothing was ever meant to touch. Always verify the rebuilt container with a real
+integrity/consistency check before trusting it, and keep a copy of the original container until the
+patched one is confirmed working live — a container that passes a basic structural check can still
+fail catastrophically the moment a real parser (or the game itself) tries to actually read from it,
+and the failure mode here is a hard crash, not a graceful fallback.
+
+## 32. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
+
+Retargeting an EXISTING reference inside a cooked asset (repointing an import row at a different
+asset) is a comparatively simple, well-supported operation. Actually adding a brand-new property
+VALUE to an asset — one that didn't exist in the source file at all, as opposed to editing something
+already there — is a materially different and much less forgiving operation with at least one
+non-obvious extra requirement.
+
+Modern engine versions serialize each property with a type-descriptor field alongside its raw name
+and value — essentially a small, structured tree describing the property's own type shape (an enum's
+underlying type, a struct's element type, a map's key/value types, and so on, encoded as a flat
+pre-order walk of typed nodes). A property-editing library's write path can outright crash (a
+null-reference failure, not a validation error) the moment it tries to serialize any
+freshly-constructed property object whose type-descriptor field was left unset — even though the
+exact same object type reads back and re-saves perfectly fine when it was loaded from an existing
+file that already had the field populated. This is easy to miss, because nothing about constructing
+the object itself, or reading it back before saving, complains.
+
+**The fix, and how to get it right**: the type-descriptor node type is typically a plain value type
+with no usable public constructor, so it has to be built through generic object-construction (e.g.
+reflection-based `CreateInstance`) and then have its name/child-count fields set directly, rather
+than instantiated the normal way. More importantly, the exact shape of that descriptor tree differs
+per property kind (a plain enum, a struct, a map, an array, a soft object reference all encode
+differently) and is not something to guess at — reverse-engineer the correct pattern for each kind by
+inspecting how a REAL, already-working cooked asset of that same property type encodes it, and copy
+that shape exactly rather than inventing one. Once each pattern is confirmed against genuine working
+examples, constructing new property values — and even growing an existing array property by
+appending brand-new elements to it, not just editing ones already present — becomes a reliable,
+reusable capability rather than a one-off hack.
+
+**The general lesson**: when a binary-asset editing library supports reading and modifying existing
+values comfortably but starts throwing opaque internal errors specifically when you try to introduce
+something genuinely new, suspect a required-but-optional-looking metadata field the format needs for
+a fresh value that a loaded-from-disk value already happens to carry — and go find a real, working
+example of the same shape to copy from, rather than treating the crash as a dead end.
+
+## 33. A native function call through a script-reflection binding can require stricter argument handling than its own C++ signature promises
+
+Two separate, unrelated native engine calls — a generic "attach this component to a socket on
+another component" function, and a "share pose/animation state with another component" function —
+each produced a hard, uncatchable crash (or a clean-looking failure) the first time they were
+actually exercised through a Lua/script-reflection binding, purely because the binding's own
+argument marshaling is less forgiving than the underlying C++ function itself.
+
+**First gotcha**: a parameter typed as the engine's lightweight interned-name type (commonly used for
+socket/bone names) needs to be constructed as that type explicitly on the script side — passing a
+bare, plain string where the function expects it can crash the process outright, inside the
+scripting framework's own native code, not as a catchable script error. A bare string had apparently
+been used successfully at low call-frequency for a long time before this was caught, which masked
+the bug rather than disproving it — it is a genuine, standing type mismatch, not something that only
+fails under specific conditions.
+
+**Second gotcha**: a function whose C++ declaration gives some trailing parameters default values
+does not necessarily get those defaults applied when called through script reflection — the binding
+can require every declared parameter to be supplied explicitly, failing with an explicit "wrong
+parameter count" error (not a crash) if a script call omits the ones with defaults, exactly as if the
+defaults didn't exist from the binding's point of view.
+
+**How these were actually found, not guessed**: a crash-dump triage step narrowed the first failure
+to landing inside the scripting framework's own module rather than the game's engine code, which
+reframed it from "an asset/data problem" to "a call-shape problem" immediately. From there, comparing
+the failing call against an ALREADY-PROVEN-STABLE call to the same or a sibling function elsewhere in
+the same codebase (rather than reasoning from the bare C++ signature alone) is what surfaced the
+exact difference. The second gotcha was found the same way — a previously silent failure ("nothing
+happened, no error") only became diagnosable once the call's own success/failure and error text were
+actually logged, rather than trusting a bare boolean result.
+
+**The general lesson**: never trust a native function's own documented or header-declared C++
+signature to describe how a script-reflection binding will actually accept it — default parameter
+values in particular are a C++-compiler-level convenience that a separate binding layer has no
+obligation to replicate, and a parameter's exact expected wrapper TYPE (not just its logical value)
+can differ from what a plain scripting-language literal naturally produces. Pass every parameter
+explicitly, wrap values using the binding's own dedicated constructors when the target type isn't a
+plain primitive, and always log a failed call's real error text rather than a bare success/failure
+flag — the difference between "wrong parameter count" and a generic marshaling crash is exactly the
+kind of detail that turns a multi-hour blind-guessing session into a one-line diagnosis.
+
+## 34. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+
+An immediate-mode GUI helper (drawing one small, reusable widget — a preview swatch, an icon button,
+anything invoked from more than one place in the same frame) was written using a fixed, literal
+string as that widget's identifier on every return path, with no per-call uniqueness applied. It
+worked correctly for a long time, because for most of that time only one instance of the widget was
+ever visibly "active" or in a meaningful state at once. The bug surfaced only once a real usage
+pattern caused two separate call sites to both hit the identical code path (the same literal ID)
+within the same frame — producing a visible "conflicting ID" complaint from the GUI framework itself,
+since it can no longer tell the two widgets apart.
+
+**The general lesson**: any immediate-mode-GUI helper function that is (or could ever be) called more
+than once per frame needs a caller-supplied identifier scope wrapped around it — not a literal ID
+baked into the helper itself — regardless of how long it's gone without visibly colliding. The
+absence of a collision during testing is not evidence the helper is safe; it's evidence that testing
+never happened to exercise two live call sites at once. Fix it once, at the helper's own signature
+(accept an id/scope parameter and wrap it internally), rather than patching each call site
+separately — a helper meant to be reused is exactly the kind of code where "it hasn't broken yet" is
+the weakest possible signal that it won't.

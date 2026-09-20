@@ -39,6 +39,11 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 27. Runtime body-shape morphing on AI-controlled NPCs is not reachable from outside the engine — the deformation is baked once at construction by a compiled rig graph that never re-evaluates
 28. A deferred-spawn transaction has a real window for assigning properties before an actor's own construction-time subsystems initialize — use it instead of patching a live instance afterward
 29. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
+30. A binary-asset editing library needs the game's own type-mappings file loaded explicitly, or a native asset silently degrades to an unreadable raw blob
+31. Patching a single package inside an already-shipped Zen/IoStore container, without its original staging tree or a full re-cook
+32. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
+33. A native function call through a script-reflection binding can require stricter argument handling than its own C++ signature promises
+34. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
