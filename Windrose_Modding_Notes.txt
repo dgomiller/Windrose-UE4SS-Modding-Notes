@@ -117,6 +117,9 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 32. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
 33. A native function call through a script-reflection binding can require stricter argument handling than its own C++ signature promises
 34. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+35. A documented, real engine function can be completely non-functional through a script-reflection binding, with no error and no partial effect — confirmed only by a 100% failure rate across repeated live attempts
+36. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
+37. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
 
 ---
 
@@ -1170,6 +1173,31 @@ unconditionally (not behind a verbosity flag), even if that branch just records 
 here's why," specifically because the success path already has its own logging and it is exactly
 the FAILURE path that a developer forgets to write a branch for, since it doesn't come up during
 ordinary happy-path testing.
+
+---
+
+### 3z. A validity check that's reliable for most spawned objects can still miss a real destruction for a specific object type — cross-check a structural side effect of the actual destroy path instead
+
+The standard "has this object been destroyed" check (asking the object itself whether it's still
+valid) is normally trustworthy and used pervasively for exactly this purpose. But it isn't
+guaranteed to be reliable for every object type a mod might spawn through — confirmed live: a
+tracking flag meant to auto-clear itself the instant a spawned object was destroyed (through two
+different destroy paths — a generic "remove this" tool, and cancelling an in-progress placement)
+simply never cleared for one particular class of spawned object, even though the exact same
+validity check is used successfully everywhere else in the same codebase for other object types.
+
+**The fix**: rather than trust the validity check universally, check a DIFFERENT signal that the
+real destroy path is structurally guaranteed to produce as a side effect — in this case, whatever
+internal tracking list a mod's own spawn/despawn system maintains is (by construction) synchronously
+updated by the real destroy function, regardless of whether the object's own validity check happens
+to reflect it promptly for that specific type. Checking list membership instead of the validity
+flag fixed the stale-tracking bug immediately.
+
+**General lesson**: a validity check is the right FIRST thing to reach for when detecting whether a
+spawned object still exists, but if it doesn't catch a destruction you know for certain happened,
+don't conclude the check is broken everywhere — look for a structural side effect the actual destroy
+function is guaranteed to produce (removal from an internal list, a reference field being cleared,
+etc.) and check that instead, scoped to the specific case that's misbehaving.
 
 ---
 
@@ -3858,3 +3886,98 @@ never happened to exercise two live call sites at once. Fix it once, at the help
 (accept an id/scope parameter and wrap it internally), rather than patching each call site
 separately — a helper meant to be reused is exactly the kind of code where "it hasn't broken yet" is
 the weakest possible signal that it won't.
+
+---
+
+## 35. A documented, real engine function can be completely non-functional through a script-reflection binding, with no error and no partial effect — confirmed only by a 100% failure rate across repeated live attempts
+
+A real, genuinely-existing engine function — one with a stable, documented C++ signature, callable
+successfully from native code and from Blueprint — was called through a Lua/script-reflection
+binding to reassign which of an actor's own components acts as its transform root. Every call
+reported success at the pcall/error-handling level (no thrown exception, no marshaling error), yet
+the actual reassignment never took effect: the actor's transform hierarchy behaved exactly as if the
+call had never been made, every single time, across many independent live attempts, including
+trying the two most plausible naming/wrapper variants of the same underlying function.
+
+**Why this is a distinct gotcha from a marshaling/argument mismatch** (contrast with §33): there was
+no error to diagnose, no wrong parameter count, no crash — the call simply had zero effect while
+still "succeeding" from the binding's own point of view. Rather than a mismatched call shape, this
+reads as the underlying engine function either not being properly exposed through this particular
+reflection path at all, or silently no-oping for a reason invisible from the scripting side.
+
+**How this was confirmed rather than assumed**: the surrounding code was written to explicitly log
+the call's own success/failure at the binding level AND independently branch on it, so every live
+test produced an unambiguous "did the actual visible behavior match what a successful call should
+have produced" answer, not just "did the call throw." A 100% failure rate across every attempt, with
+the call itself always reporting success, was the signal that this specific function-through-this-
+binding combination doesn't work, rather than a code bug on the calling side.
+
+**General lesson**: when a real, well-documented native function reports success through a
+script-reflection binding but produces zero observable effect, and this holds across every retry —
+don't keep varying the call's arguments or timing looking for the right incantation. Log the call's
+own reported outcome AND the actual resulting state independently, confirm the mismatch is
+consistent (not a one-off timing fluke), and if it's 100% reproducible, treat that specific function
+as unavailable through this binding and design around it instead — the same class of engine-facing
+"looks fine, does nothing" gap this project has already documented for other property writes,
+just manifesting on a function call this time instead of a property assignment.
+
+---
+
+## 36. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
+
+A feature needed to know, on demand, how far into a currently-playing animation a character's
+skeleton actually was — the obvious approach is to read the engine's own live "current playback
+position" property off the running animation instance. That property resolved without error and
+returned a plausible-looking number, but it did not track reality: reading it back repeatedly while
+the animation was visibly playing for several real seconds kept reporting the position it had at the
+very start, never advancing.
+
+Rather than continue investigating exactly which property/read path is the correct one for this
+specific case (a search with no guarantee of a clean answer, and no visible error to root-cause
+against), the value was tracked independently in the calling code instead: record a
+(startTimestamp, startPosition) pair at the exact moment playback begins or is seeked to a new
+position, then compute the current position on demand as `startPosition + (now - startTimestamp)`,
+wrapping at the animation's own known total length for a looping clip. This requires only a
+reliable wall-clock/monotonic timer (already used elsewhere in this same codebase for other
+sub-second timing) and the animation's own already-known length — no dependency on the
+engine's own live-readback property at all.
+
+**General lesson**: when an engine-side "what's the current state of this ongoing process" read is
+available but doesn't visibly track reality once tested against real elapsed time, don't assume the
+fix is finding the "right" property name or read path. If you already know the start conditions
+(when something began, and at what value) and can measure elapsed time reliably, computing the
+current value yourself is often a more robust substitute than continuing to chase an unreliable
+engine readback — and it sidesteps whatever binding-specific reason that readback wasn't working in
+the first place, without ever needing to actually find that reason.
+
+---
+
+## 37. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
+
+A per-tick placement/follow routine had one boolean check gating a block of code that did TWO
+distinct things: (1) snap an object's vertical position down onto the floor surface beneath it, and
+(2) run a forward raycast so the object never gets dragged behind/through solid geometry (a wall,
+for instance) regardless of which direction it's being aimed. Both behaviors lived inside the same
+`if <one shared flag>` block because, for every object type this system had handled up to that
+point, "should floor-snap" and "should respect nearby solid geometry" always happened to agree.
+
+Adding a new kind of object that explicitly should NOT floor-snap (it needs to be liftable into open
+air) meant exempting it from that one shared flag — which, because both behaviors were gated behind
+the exact same condition, ALSO silently disabled the wall-avoidance raycast for that object type.
+The object worked correctly in open areas and only revealed the gap once tested near a wall, where
+it now sailed straight through to the far side instead of stopping at the wall the way every other
+object type already did.
+
+**The fix**: widen the gating condition to admit the new object type too, but keep the actual
+floor-anchoring math (a specific vertical offset subtraction) conditioned separately, defaulting to
+zero for the new type — so the SAME general-purpose raycast keeps running and landing on whatever
+solid geometry it hits first, while only the floor-specific adjustment on top of that result is
+skipped for the object that shouldn't get it.
+
+**General lesson**: before exempting a new caller from a behavior that's controlled by one shared
+boolean/nil check, read the ENTIRE block that check gates, not just the specific sub-behavior you
+mean to change. A single flag bundling two behaviors that have always agreed by coincidence is easy
+to miss until a new caller finally wants one without the other — and the safer fix is usually
+splitting the bundled behaviors apart (share what's genuinely general-purpose, separately condition
+what's specific) rather than either keeping both bundled or duplicating the whole block for the new
+case.

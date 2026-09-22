@@ -45,6 +45,9 @@ Everything here was learned building real, shipping mods ([url=https://www.nexus
 [*]32. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
 [*]33. A native function call through a script-reflection binding can require stricter argument handling than its own C++ signature promises
 [*]34. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+[*]35. A documented, real engine function can be completely non-functional through a script-reflection binding, with no error and no partial effect — confirmed only by a 100% failure rate across repeated live attempts
+[*]36. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
+[*]37. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
 [/list]
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too, because a documented dead end saves someone else the same hours: stale UObject pointers, native crashes with zero pcall-catchable trace, Mercuna navigation (not the UE navmesh), why a property write can report success and never render, DXGI/D3D hooking pitfalls, and more.
