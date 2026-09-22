@@ -3981,3 +3981,126 @@ to miss until a new caller finally wants one without the other — and the safer
 splitting the bundled behaviors apart (share what's genuinely general-purpose, separately condition
 what's specific) rather than either keeping both bundled or duplicating the whole block for the new
 case.
+
+---
+
+## 38. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+
+A first-person-style camera built on a spring-arm ("boom") component has (at least) two distinct
+offset properties available, and they are NOT interchangeable even though both visually nudge the
+camera around: one is applied to the CAMERA component itself, in the camera's own (post-rotation)
+local space; the other is applied to the boom's TARGET point, in the boom's PARENT (i.e. the
+owning actor's body-yaw, pre-rotation) space. A camera built to stay centered on a specific bone
+(a head, for a first-person view) that only ever writes the camera-space offset will look correctly
+centered from ONE viewing angle, then visibly swing around the intended pivot point as the camera
+rotates — because a camera-space offset rotates WITH the view, while the actual reference point
+(the bone) does not move relative to the body.
+
+**The fix**: zero out the camera's own baked local offset entirely, and instead compute the
+target-point offset (the boom-parent-space one) directly from the real world-space position of the
+bone being tracked, converted into the actor's own body-yaw frame (not the camera's current view
+rotation). Since that offset is applied BEFORE the view rotation is layered on top, the computed
+point stays pinned to the bone regardless of which way the player is currently looking — eliminating
+the orbit entirely, by construction rather than by tuning a magic-number correction.
+
+**General lesson**: when a camera-rig bug looks like "it's basically right, but swings/orbits as you
+turn," suspect a reference-frame mismatch between the rig's own offset properties before assuming
+the position math itself is wrong. A boom/spring-arm-style camera typically has one offset that
+lives in the parent's pre-rotation space and one that lives in the camera's own post-rotation space
+— an offset computed against a bone's real world position needs to be converted into whichever frame
+the property you're writing actually uses, and picking the wrong one produces exactly this
+direction-dependent drift.
+
+---
+
+## 39. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+
+A tab bar built with an immediate-mode GUI library exposes a per-tab flag intended to group certain
+tabs together and keep them out of the way of the rest — the natural assumption is that this also
+right-aligns (or left-aligns) those tabs into whatever unused width the bar has, the way a CSS
+flexbox `margin-left: auto` would. Setting the flag on two tabs and testing live showed no visible
+change at all: the tabs stayed in plain left-to-right order, bunched with everything else, with no
+gap separating them from the rest.
+
+**Confirmed by reading the library's own vendored source, not by trying more flag combinations.**
+The tab bar's internal offset calculation for this class of tab only CLAMPS it from overflowing past
+the bar's own width (`offset = min(max(0, barWidth - groupWidth), offset)`) — it never adds slack
+width to push the tab rightward (or leftward) when the bar is wider than its tabs. The flag's real
+purpose is grouping/keep-together behavior for overflow scenarios, not layout alignment.
+
+**General lesson**: when a GUI library flag's behavior doesn't match what its name suggests, and a
+live test shows literally zero visible effect, reading the library's actual (usually vendored,
+locally-available) source for that exact code path settles the question definitively and immediately
+— faster and more conclusive than iterating through plausible flag combinations by trial and error.
+True alignment into unused bar space, if genuinely needed, requires computing the offset yourself
+(or replacing the built-in bar with a custom-drawn row of buttons) rather than relying on a
+flag that turns out to solve an adjacent, differently-scoped problem.
+
+---
+
+## 40. A large single-file scripting mod can hit the scripting language's own hard local-variable ceiling — pack new state onto an existing table instead of adding new top-level variables
+
+Lua enforces a hard limit of 200 local variables live at once within a single function scope — and a
+mod's main entry-point file, if it grows large enough over time (thousands of lines, hundreds of
+independent small features each adding "just one more" top-level local), can genuinely reach that
+ceiling. Past that point, compiling the file fails outright with "too many local variables," and the
+failure is immediate and total — it doesn't degrade gracefully, and the error message doesn't
+identify which addition tipped it over, only the line where the compiler's own internal counter
+finally overflowed.
+
+**The fix used here**: rather than declaring new state as more top-level `local` variables, pack it
+as fields on an EXISTING table that's already a single local (already used elsewhere in the file for
+exactly this purpose). A table-field assignment (`existingTable.newField = value`, or
+`existingTable.newMethod = function() ... end`) does not consume a slot against the enclosing
+function's local-variable budget the way a bare `local x = ...` does — a function LITERAL assigned
+into a table field becomes its own separate closure with its own independent local budget, so
+whatever locals it declares INSIDE its own body don't count against the outer file's ceiling either.
+
+**A related trap this same fix has to respect**: a function literal closes over whichever locals are
+lexically visible at the exact point in the source where it's WRITTEN, regardless of which table or
+variable ultimately holds it. Moving a function's definition earlier in the file than some local
+variable it needs to reference doesn't make that variable visible to it — Lua resolves the reference
+against locals declared strictly BEFORE that point in the source, silently falling back to a (likely
+nil) global otherwise, which only surfaces as a runtime error the first time the function is actually
+called. So packing new functionality onto a shared table still requires writing it in the right
+place in the file — after everything it needs to reference is already declared — not just anywhere
+convenient.
+
+**General lesson**: in a large, long-lived single-file Lua mod, prefer a single shared table (or a
+small number of them) as the home for new cross-cutting state and helper functions, rather than
+individual top-level locals per feature — it scales indefinitely against the language's own local
+ceiling, at the cost of one extra level of indirection (`table.field` instead of a bare name) that's
+a small price for not having to do emergency triage on old code when a totally unrelated new feature
+happens to be the one that finally exceeds the limit.
+
+---
+
+## 41. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+
+This game's day/night cycle component exposes a "current time of day" read (in hours) alongside a
+speed-multiplier property and a raw "world day time" property. Investigating how to reliably freeze
+the visible time of day for consistent lighting revealed several layered surprises: writing the raw
+time property directly has no lasting effect at all (it's read once at level start and never
+consulted again by whatever actually drives the visible clock); changing the speed multiplier a
+second time mid-session produces an unpredictable jump rather than a smooth transition; and even
+disabling the component's own per-frame tick — which DOES stop the sun/lighting from visibly moving,
+and looks like a clean, exact freeze while active — does not actually stop time from "passing"
+underneath that freeze. Re-enabling the tick after a long enough real-world pause reveals the sun
+has jumped to wherever the clock would have naturally reached, as if the freeze had never happened.
+
+**Working theory, consistent with every one of those symptoms**: the visible "current hour" appears
+to be computed live from real elapsed time (scaled by the speed multiplier), not accumulated only
+during the component's own `Tick`. If that's the case, disabling `Tick` only stops the component from
+APPLYING its already-computed value to the actual sun/lighting — the underlying computation, driven
+by something outside that component's own tick (real elapsed time), keeps advancing invisibly the
+whole time. The visible jump on resume isn't the clock suddenly moving; it's the display finally
+catching up to a value that was silently correct the entire time.
+
+**General lesson**: a component's own "disable my tick" switch stopping VISIBLE movement doesn't
+prove the underlying value it displays has also stopped changing, if that value is computed from an
+external time source (real elapsed time, a network-replicated authority, etc.) rather than
+accumulated purely inside that same tick. Before relying on a tick-disable as a true "freeze,"
+consider testing it over a REALISTIC duration (not just a few seconds) and comparing the resumed
+value against what the untouched clock would have reached in that same span — a short test can look
+like a perfect, exact freeze and still be silently wrong over the timescales real usage actually
+involves.

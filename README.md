@@ -47,6 +47,10 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 35. A documented, real engine function can be completely non-functional through a script-reflection binding, with no error and no partial effect — confirmed only by a 100% failure rate across repeated live attempts
 36. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
 37. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
+38. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+39. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+40. A large single-file scripting mod can hit the scripting language's own hard local-variable ceiling — pack new state onto an existing table instead of adding new top-level variables
+41. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
