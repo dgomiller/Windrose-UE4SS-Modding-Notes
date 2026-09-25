@@ -62,6 +62,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 50. When auditing captured data against a reference catalog, compare literal strings from the real source — never a reconstructed or templated name
 51. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
 52. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
+53. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while leaving its real combat animation completely unreachable — the attack sequence can be baked directly into that specific character family's own animation graph, not driven through a generic system
+54. A spawned/summoned actor's native AI targeting system can be a completely separate layer from its faction/damage-relationship data — fixing "it damages the wrong thing" does not fix "it targets the wrong thing"
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

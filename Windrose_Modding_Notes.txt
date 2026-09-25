@@ -4316,3 +4316,80 @@ the project's own few files) can still rebuild quickly for a small change if its
 intact — target the specific component/module that actually changed rather than triggering a full
 rebuild, and expect the compiled artifact to need a full process restart (not any kind of hot-reload)
 to take effect, unlike interpreted-language changes in the same project.
+
+## 53. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while
+leaving its real combat animation completely unreachable — the attack sequence can be baked directly
+into that specific character family's own animation graph, not driven through a generic system
+
+An actor that visually "stood still" could be made to walk by overriding its controller class and
+animation-instance class with a pairing already proven to work on a different, related actor. Once
+walking, it would still not fight: melee, spellcasting, and unarmed combat never rendered under any
+tested combination of controller and animation instance — including the exact pairing independently
+confirmed to drive real combat animation on another character. Only a ranged "fire/throw" ability
+worked under a foreign pairing.
+
+Root cause: the underlying decision/ability system (state machine, ability component, and the actual
+equipped-weapon object) stayed completely intact regardless of which controller or animation instance
+was forced on — confirmed with a purpose-built probe that found a real, fully-formed weapon-item
+component present on every test spawn, untouched by the override. The wall was specifically the
+animation side: melee/spellcast/unarmed attack sequences are apparently authored as bespoke states
+inside each character family's own animation graph, not dispatched through a generic
+montage-through-a-slot mechanism — no foreign animation instance, however combat-capable for its OWN
+native weapon family, could render a different family's attack. A ranged fire/throw ability appears to
+be a much more generic, weapon-family-agnostic mechanic by comparison, which is why it alone survived
+being paired with a foreign animation instance.
+
+A related trap surfaced investigating the same actor family: an existing, shipped "reskin" of this
+character onto a different donor class was ALSO checked with the weapon-item probe, and turned out to
+be equipped with the DONOR's own original weapon item (just visually reskinned to look like the
+target's signature weapon) rather than a real instance of the target's own weapon. **A skeletal mesh
+sitting on the correct socket is not proof that the actor is actually equipped with that weapon in the
+game's own combat-logic sense** — always check for the real weapon-item object (whatever holds the
+actual attack/damage data) directly, never infer equip state from appearance alone.
+
+**How to apply**: before assuming a controller/animation-instance override that fixes locomotion will
+also preserve full combat capability, test explicitly against a real hostile target — decision logic
+and animation logic can be, and often are, decoupled to different degrees per ability type (melee vs.
+ranged vs. magic vs. unarmed all behaved differently in this case). If a class's own native controller/
+animation pairing is required for real combat to render, there may be no way to get both an altered
+gait AND full native combat on the same actor without either accepting the native locomotion or
+accepting a different (donor's own) combat behavior instead.
+
+## 54. A spawned/summoned actor's native AI targeting system can be a completely separate layer from
+its faction/damage-relationship data — fixing "it damages the wrong thing" does not fix "it targets
+the wrong thing"
+
+A summoned ally actor was made faction-friendly via a direct write to its faction-relationship
+component, confirmed to correctly stop it from damaging the player or other friendly actors. It kept
+"attacking" (visibly targeting and animating an attack against) friendly actors anyway, and never
+targeted genuinely hostile actors nearby. Reading the faction component's own live value confirmed the
+write had taken and held — the faction fix was real, it just didn't touch the actual problem.
+
+An offline export of the actor's own AI configuration asset (via an external asset-inspection tool,
+since a live in-engine property reflection walk only ever showed a bare reference to the nested
+sub-object, never its actual configured contents) revealed the real mechanism: a separate native
+"agent"/targeting system, driven by its own configuration asset, assigns dynamic categorization tags
+to nearby candidates (via several independent categorizer sub-objects, re-evaluated on a fast fixed
+tick interval — ruling out a stale-value/timing explanation) and only targets candidates carrying a
+specific "enemy" tag. The one categorizer responsible for assigning that tag based on relationship had
+ZERO exposed configuration fields in the export — its actual friend/foe logic is fully native,
+hardcoded compiled behavior with no data-level lever to adjust directly.
+
+The fix came from the actor's own pre-existing default configuration, not from further faction tuning:
+it already carried both an "owner" reference (pointing at whatever spawned/summoned it) and a flag
+indicating its relationships should be inherited from that owner rather than read independently. The
+owning actor already discriminated friend from foe correctly on its own. Explicitly synchronizing the
+summoned actor's own ownership-identity field to the REAL player's own identity record (not just
+setting the "use owner's faction" flag, which was already set) and forcing the relevant on-change
+callback to re-run was what actually fixed targeting — the categorizer was evidently built to consult
+ownership identity specifically, not a faction asset reference in isolation.
+
+**How to apply**: when a summoned/spawned actor's native combat AI targets or ignores the wrong things
+despite a provably-correct faction/relationship-asset write, don't keep tuning faction data — check
+whether the actor has a SEPARATE agent/targeting configuration system with its own categorization
+logic, and specifically whether an ownership-identity field (distinct from a bare faction reference)
+needs to be explicitly synchronized to a real, already-correctly-behaving entity (like the player or
+the actor's own summoner) rather than assigned an independent value. When a live property reflection
+walk bottoms out at a compiled tag-query/expression-tree-shaped struct field, an external asset-export
+tool that can resolve and print that struct's real configured contents in readable form is worth
+reaching for immediately, rather than trying to decode it through further live reflection.
