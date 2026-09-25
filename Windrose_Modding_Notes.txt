@@ -4174,3 +4174,145 @@ work" experiment — test any such change on a disposable/reproducible instance 
 an "obviously done" value AND an "obviously not done yet" value as equally capable of triggering
 code paths that were never designed to handle either extreme, not just the direction that seems
 intuitively risky.
+
+## 45. A tree UI built by splitting a delimited display string has no escaping — a literal
+delimiter character inside what's meant to be one leaf label silently creates extra nesting
+
+A category-tree UI driven by a flat config file (one line per leaf, its display path encoded as a
+dot-delimited string like `Category.Subcategory.LeafName`) builds its nested tree purely by
+splitting that string on the delimiter. There is no escaping mechanism, and nothing validates a
+leaf name before it's written. Renaming a leaf to include a literal `.` (e.g. a measurement like
+"2.5m" embedded in the name) silently turned it into two extra nested tree levels — the period is
+indistinguishable from a real path separator to the parser.
+
+**How to apply**: before writing any new display label into a delimiter-based hierarchical config
+(section paths, dotted keys, breadcrumb-style category strings), check it for the delimiter
+character and reword around it (round a decimal, substitute a different punctuation mark, spell it
+out) rather than writing it as-is. Don't assume a one-off rename is safe just because the field
+"is just a display string" — if the SAME string also encodes structure, it isn't.
+
+## 46. Extending an existing array anywhere but its true trailing end silently shifts every later
+entry's flattened index, corrupting an already-generated external mapping
+
+A UI or save-data pipeline that flattens several source arrays into one ordered list (array A's
+items, then array B's items, then array C's items...) and assigns each flattened position a
+permanent index — later stored externally (a generated menu file, a save format) — has a sharp
+edge: extending ANY array in that chain except the very last one shifts the index of every item in
+every array that comes after it. An external file generated from an EARLIER version of that
+flattening now silently points its old indices at different, wrong data — with no error, since
+every index still resolves to something.
+
+**How to apply**: when adding new items that conceptually belong with an existing group, only
+append directly to that group's own array if it is provably the LAST group in the flattening order.
+Otherwise, create a brand-new trailing group that maps to the same display location — mechanically
+safe, visually identical. After any batch edit to one of these arrays, re-flatten the data and diff
+the ORIGINAL entries' values-by-index against their pre-edit values, not just check the new entries
+landed in the right place — a mid-list shift breaks everything after it while every individual edit
+still looks correct in isolation.
+
+## 47. A live probe showing a real AI/movement component stack on an actor class is not proof a
+specific behavior is active — confirm by observing native, unmodified behavior directly
+
+Probing an NPC class found a fully-populated, live-possessed AI controller, a real pathfinding
+component, and a non-zero movement speed — circumstantial evidence that strongly suggested the
+class should already walk around on its own. It doesn't, in the unmodified game or when freshly
+spawned. The AI/movement stack was there for something else entirely (facing/tracking the player,
+idle behavior on an intentionally-stationary character) — a class carrying real infrastructure for
+some AI behavior says nothing about which SPECIFIC behavior (locomotion, in this case) it's
+actually being used for.
+
+**How to apply**: treat a probed component inventory as a hypothesis, not a verdict, about any
+runtime behavior in question — verify by watching the real, unmodified in-game behavior before
+concluding a class does or doesn't support something. This cuts both ways: the same investigation
+also found the opposite mistake possible (assuming a class CAN'T support a behavior just because a
+component looks absent or repurposed) — component presence/absence is evidence to weigh, not proof
+in either direction.
+
+## 48. A standard "stop AI logic" call doesn't reliably freeze every actor's movement — zeroing the
+movement component's own speed directly is a robust, mechanism-agnostic fallback
+
+The conventional way to freeze an AI-controlled actor in place (pause its controller's own logic
+component) worked for most actor classes tested but not all of them — one class kept moving despite
+a successful-looking freeze call. Its movement was apparently being driven by something other than
+the standard AI logic path (a higher-level behavior graph or a per-tick script), which the freeze
+call had no authority over.
+
+**How to apply**: when a standard AI-freeze mechanism doesn't stick on a given actor class, also
+zero the movement component's own speed property directly (and stop any current velocity
+immediately) as an unconditional second layer. A movement component that can't produce speed can't
+produce visible motion regardless of what native or scripted system is actually issuing move
+commands — sidestepping the need to identify which system that is. There's often no cheap way to
+predict in advance which classes need the extra step, so layering both together on every freeze
+call is more robust than branching per class.
+
+## 49. A generated data file that looks like a full history may only hold recent state — diff
+against known-good data before regenerating/overwriting from it
+
+A tool that captures live-probed data into an accumulating file, later fed into a generator that
+rebuilds a larger persistent dataset, can be easy to mistake for a growing historical log. In one
+case the capture file was actually keyed by name and only ever held whatever had been probed
+recently — re-running the generator against it produced a dataset roughly a fifth the size of what
+had already been built up across many prior sessions, which would have silently deleted the rest had
+it been used to overwrite the existing dataset directly.
+
+**How to apply**: before regenerating any persistent dataset from a capture/export file, diff the
+freshly-generated data's keys against the EXISTING dataset first. Merge in only the genuinely new
+keys; never assume a regeneration step is safe to overwrite wholesale just because the tooling
+"regenerates the whole block" — confirm the SOURCE file is actually a complete history, not a
+recent-state snapshot, before trusting it as one.
+
+## 50. When auditing captured data against a reference catalog, compare literal strings from the
+real source — never a reconstructed or templated name
+
+Cross-checking a batch of live-captured asset names against an existing content catalog produced a
+list of "missing" entries that were, on closer inspection, all false positives. The comparison had
+substituted a generic placeholder for part of each name (assuming a naming pattern) instead of using
+the literal captured string — the real assets used a different, more specific word in that position,
+so an exact-string match against the catalog could never succeed even though every asset was already
+present and correctly catalogued.
+
+**How to apply**: when auditing captured or scraped data against a reference catalog, always use the
+literal string straight from the real source for the comparison. Never build a name from an assumed
+pattern/template and compare against that reconstruction, even when the pattern looks obviously
+correct — a template that's wrong in one small, easy-to-miss way produces a confident, fully
+populated, entirely false report, which is worse than finding nothing because it looks like a real
+result. Separately worth checking in the same kind of audit: confirm which of possibly SEVERAL
+overlapping reference catalogs a given feature actually reads from (trace the consuming code) before
+concluding something is absent from "the" catalog — a project can accumulate more than one catalog
+covering overlapping ground over time.
+
+## 51. A persistent status file one side writes and another polls needs an explicit resync on load,
+not just a write-on-change
+
+A feature toggle lived as an in-memory variable on one side of a scripting/compiled-code boundary,
+mirrored to a plain status file on disk so the OTHER side (which couldn't read the first side's
+memory directly) could poll it. The in-memory variable correctly reset to its default value on every
+reload, as a plain variable does — but the file on disk does not reset itself, and nothing ever wrote
+it except the toggle action itself firing. Once toggled on and then reloaded, the file kept reporting
+"on" indefinitely, across any number of future reloads or even full restarts, silently diverging from
+the in-memory side's own correct default.
+
+**How to apply**: for any bridge where one side writes a persistent file and another polls it to
+mirror live state, write that file once unconditionally at startup/load (syncing it to the actual
+current value), in addition to writing it on every real state change. A write-on-change-only
+convention looks correct in normal operation and only reveals the gap after a reload following a
+non-default state — exactly the scenario most likely to go unnoticed during testing.
+
+## 52. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and
+rebuild step — editing the interpreted-language source alone does nothing for it
+
+A dropdown list in a compiled companion tool was generated once from a spreadsheet and pasted
+directly into the compiled source as a hardcoded array, specifically because the compiled tool
+couldn't read the interpreted-language config file at runtime. Adding a new option to the
+interpreted-language config alone made it applicable programmatically but did nothing for the
+dropdown UI, since that list is a separate, frozen copy that only changes when someone re-runs the
+generator (or hand-edits the array) and rebuilds the compiled binary.
+
+**How to apply**: when a project has both an interpreted-language config and a compiled UI generated
+from the same spreadsheet/source data, adding a new item requires updating BOTH representations and
+rebuilding the compiled side — check for this split before assuming a single data-file edit is
+sufficient. Also worth knowing: a build system that compiles a large framework from source (not just
+the project's own few files) can still rebuild quickly for a small change if its build cache is
+intact — target the specific component/module that actually changed rather than triggering a full
+rebuild, and expect the compiled artifact to need a full process restart (not any kind of hot-reload)
+to take effect, unlike interpreted-language changes in the same project.

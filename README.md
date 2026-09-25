@@ -54,6 +54,14 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 42. An actor's "can be damaged" flag only gates the generic damage pipeline — a component can carry its own independent hit-point value that a custom gameplay system decrements directly
 43. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
 44. A struct field that reads as a small numeric "progress" range can be unsafe to overwrite live in EITHER direction — treat it as read-only unless a documented safe setter exists
+45. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
+46. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
+47. A live probe showing a real AI/movement component stack on an actor class is not proof a specific behavior is active — confirm by observing native, unmodified behavior directly
+48. A standard "stop AI logic" call doesn't reliably freeze every actor's movement — zeroing the movement component's own speed directly is a robust, mechanism-agnostic fallback
+49. A generated data file that looks like a full history may only hold recent state — diff against known-good data before regenerating/overwriting from it
+50. When auditing captured data against a reference catalog, compare literal strings from the real source — never a reconstructed or templated name
+51. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
+52. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
