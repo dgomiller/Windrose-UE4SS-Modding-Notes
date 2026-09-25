@@ -51,6 +51,9 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 39. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
 40. A large single-file scripting mod can hit the scripting language's own hard local-variable ceiling — pack new state onto an existing table instead of adding new top-level variables
 41. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+42. An actor's "can be damaged" flag only gates the generic damage pipeline — a component can carry its own independent hit-point value that a custom gameplay system decrements directly
+43. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+44. A struct field that reads as a small numeric "progress" range can be unsafe to overwrite live in EITHER direction — treat it as read-only unless a documented safe setter exists
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

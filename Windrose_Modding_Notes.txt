@@ -4104,3 +4104,73 @@ consider testing it over a REALISTIC duration (not just a few seconds) and compa
 value against what the untouched clock would have reached in that same span — a short test can look
 like a perfect, exact freeze and still be silently wrong over the timescales real usage actually
 involves.
+
+## 42. An actor's "can be damaged" flag only gates the generic damage pipeline — a component can carry its own independent hit-point value that a custom gameplay system decrements directly
+
+A world prop's actor-level "can this be damaged" flag (the standard engine invulnerability switch)
+is often assumed to be the single gate for "can this thing be destroyed/harvested." It isn't
+necessarily. A gatherable/mineable resource-node actor can carry one or more child components, each
+with its OWN independently-tracked hit-point value, that a custom harvest/mining hit-detection
+system reads and decrements DIRECTLY — completely bypassing the actor's own generic damage flag,
+which only gates the standard damage-application pipeline (point/radial/any-damage events).
+
+Confirmed live: setting the actor-level invulnerability flag left a placed decor prop still fully
+mineable/choppable. A property dump of every attached component (not just the actor's own
+top-level properties) found the real mechanism — a per-cluster/per-node component with its own
+plain numeric health field, entirely separate from anything the actor-level flag touches. Forcing
+that component's own health value to something unreachably large (rather than trying to find a
+"disable damage" flag on it, which may not exist) made the prop immune while leaving everything
+else about it untouched.
+
+**General lesson**: when an "invulnerability" flag doesn't behave as expected, don't assume the
+flag failed — walk every attached COMPONENT's own properties, not just the actor's, before
+concluding the mechanism is broken. A gameplay system built for a specific interaction type
+(harvesting, mining, chopping) very often lives on its own dedicated component with its own
+state, independent of the actor's generic damage system entirely.
+
+## 43. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+
+A capsule/box collision volume configured as query-only (responds to line/sweep traces, but applies
+no physical force and doesn't obstruct movement) is often assumed to be functionally invisible to
+gameplay — it won't push the player, won't stop a bullet, won't block a walk path. But a
+third-person camera's own "pull the camera in to avoid clipping through geometry" behavior is
+itself implemented as a collision-avoidance TRACE (a query), not a physics interaction — so a
+query-only volume is exactly as visible to that system as a fully solid wall.
+
+This matters most for gameplay-detection volumes that are much LARGER than their associated visible
+mesh (a warmth/aura/trigger radius sized to a gameplay range, several times the size of the actual
+object) — walking near the small, harmless-looking object can still yank the camera in from several
+meters away, with no visible cause, because the invisible detection volume — not the mesh — is what
+the camera's trace is hitting.
+
+**General lesson**: if a third-person camera behaves as though something solid is nearby when the
+visible geometry doesn't justify it, look for an oversized, query-only detection/trigger volume
+attached to the same actor before assuming the camera system itself is misbehaving. The fix (when
+the detection functionality isn't needed on that particular instance) is to disable that
+component's collision entirely via its own real "set collision enabled" function — not by trying to
+find and clear a single trace channel's response by hand, which requires knowing exactly which
+channel that camera system traces against.
+
+## 44. A struct field that reads as a small numeric "progress" range can be unsafe to overwrite live in EITHER direction — treat it as read-only unless a documented safe setter exists
+
+A gameplay-progress struct (e.g. a min/max interval representing "how many more interactions until
+this object is fully consumed/broken/completed") looks like an obvious, low-risk lever: widen it to
+make something require more interactions, or invert/zero it to mark something as already done.
+Confirmed live, on the same struct, both of those instincts were actively dangerous:
+
+- Setting an INVERTED range (a maximum below the minimum) caused the object to instantly complete
+  its "fully consumed" state on the very next interaction — the interval's raw numeric WIDTH is very
+  likely read directly as a remaining-progress count somewhere in native code, and an inverted range
+  produces a huge negative/overflowed width that reads as "already zero or less."
+- Setting a much LARGER but still validly-ordered range (same minimum, a much bigger maximum) froze
+  the entire process, reproducibly — almost certainly a native loop that iterates across the
+  interval's width once per interaction, never designed to handle a width many orders of magnitude
+  larger than the small handful of steps the feature actually ships with.
+
+**General lesson**: a small numeric struct that visibly represents "progress toward completion" is
+not safe to assume is a plain, side-effect-free data value just because it LOOKS like one. Unless a
+real, documented setter function exists for it, don't write to it directly in a "shouldn't this just
+work" experiment — test any such change on a disposable/reproducible instance first, and treat both
+an "obviously done" value AND an "obviously not done yet" value as equally capable of triggering
+code paths that were never designed to handle either extreme, not just the direction that seems
+intuitively risky.
