@@ -71,6 +71,8 @@ Every entry is a specific, confirmed-live finding — not a guess, not "should w
 
 `pakcontents.xlsx` — an export of every asset name inside the game's `.pak`/`.utoc` files, one sheet per file. Useful for finding a class/asset path to spawn or reference without digging through the raw archives yourself.
 
+The Nexus download (`Windrose_Modding_Notes.zip`) bundles all of the above plus the [`LICENSE`](LICENSE) file (see License below) — the GitHub repo is always the canonical, most current copy.
+
 ## Using it
 
 Plain text files, so pick whatever fits your workflow:
