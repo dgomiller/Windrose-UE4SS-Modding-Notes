@@ -891,6 +891,17 @@ reflecting on a function to invoking it, treat ANY function you haven't already 
 before as a real crash risk, save first (or accept the game may need a hard restart), and don't let
 "it's just one float/name argument" talk you out of that caution.
 
+**Correction, found later**: the single-`FName`-argument query function's crash above was
+root-caused to passing a raw string where the binding actually wants a real `FName` object — not a
+genuine defect in the function itself. Once converted (most UE4SS Lua bindings expose an
+`FName(str)`-style constructor, or a helper like `FindOrAddFName`), the same function was called
+20+ times in a row with zero crashes, cleanly reporting its normal result every time. **Refines the
+lesson above**: an unfamiliar function crashing on first invocation is still worth taking seriously
+in the moment, but isn't always proof the function itself is inherently dangerous — a wrong
+argument TYPE (a plain string where an `FName` is expected is the single most common offender) can
+look identical to a fundamentally unsafe call until you isolate and fix the marshaling. Once fixed,
+re-test before permanently blacklisting a function as "too risky to ever call again."
+
 ### 3m. A UFunction's OWN return value can be meaningless — check the CALL's success, not the function's return
 Some engine functions communicate their result only through OUT-PARAMETERS (pre-allocated empty
 tables passed in, populated by the call) and have no meaningful return value of their own — a
