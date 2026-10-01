@@ -64,6 +64,27 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 52. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
 53. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while leaving its real combat animation completely unreachable — the attack sequence can be baked directly into that specific character family's own animation graph, not driven through a generic system
 54. A spawned/summoned actor's native AI targeting system can be a completely separate layer from its faction/damage-relationship data — fixing "it damages the wrong thing" does not fix "it targets the wrong thing"
+55. A script-reflection method can be unbound on one actor class while others on the same reference work
+56. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
+57. In Dear ImGui a row's height is its tallest item
+58. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
+59. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
+60. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
+61. Colour written to a text-render component is treated as linear, not sRGB
+62. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
+63. A render-state property written from a non-game-thread callback can be stored but never shown
+64. Updating render components in place instead of rebuilding them on every edit is cheap hygiene — but check a crash address against history before blaming it
+65. A loader you built yourself lets you turn crash addresses into function names
+66. Loading a class from disk in the middle of a staggered restore lets the engine run the queued callbacks INSIDE the running one
+67. A script-side array walked repeatedly in a tight loop destabilises the scripting bridge — read it once and cache the answer
+68. Test on the scripting loader your players actually use — a locally built copy can silently end up installed
+69. Delayed script callbacks run on a separate thread that shares the interpreter with the game thread — the likely source of random scripting-state corruption
+70. A self-rescheduling timer chain with an unguarded error dies silently — and leaves its temporary state switched on forever
+71. Raw static meshes as spawnable, text-bearing decor: rotate the mesh component, key the type on class plus mesh, and read bounds with the out-table form
+72. Quiet mode for a script mod: defer every timer callback while heavy game-thread work runs — and why moving timers onto the game thread breaks rendering (2026-10-01)
+73. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+74. A raw mesh spawned inside a loot/pickup wrapper is passthrough until its collision is forced to Block (2026-10-01)
+75. Reloading a script mod can leave its timers stale — relaunch instead (2026-10-01)
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

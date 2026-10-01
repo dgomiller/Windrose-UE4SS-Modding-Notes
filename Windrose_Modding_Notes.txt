@@ -120,6 +120,44 @@ Table of contents (this is a plain-text file — search for a heading's exact wo
 35. A documented, real engine function can be completely non-functional through a script-reflection binding, with no error and no partial effect — confirmed only by a 100% failure rate across repeated live attempts
 36. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
 37. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
+38. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+39. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+40. A large single-file scripting mod can hit the scripting language's own hard local-variable ceiling — pack new state onto an existing table instead of adding new top-level variables
+41. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+42. An actor's "can be damaged" flag only gates the generic damage pipeline — a component can carry its own independent hit-point value that a custom gameplay system decrements directly
+43. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+44. A struct field that reads as a small numeric "progress" range can be unsafe to overwrite live in EITHER direction — treat it as read-only unless a documented safe setter exists
+45. A tree UI built by splitting a delimited display string has no escaping — a literal
+46. Extending an existing array anywhere but its true trailing end silently shifts every later
+47. A live probe showing a real AI/movement component stack on an actor class is not proof a
+48. A standard "stop AI logic" call doesn't reliably freeze every actor's movement — zeroing the
+49. A generated data file that looks like a full history may only hold recent state — diff
+50. When auditing captured data against a reference catalog, compare literal strings from the
+51. A persistent status file one side writes and another polls needs an explicit resync on load,
+52. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and
+53. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while
+54. A spawned/summoned actor's native AI targeting system can be a completely separate layer from
+55. A script-reflection method can be unbound on one actor class while others on the same reference work
+56. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
+57. In Dear ImGui a row's height is its tallest item
+58. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
+59. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
+60. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
+61. Colour written to a text-render component is treated as linear, not sRGB
+62. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
+63. A render-state property written from a non-game-thread callback can be stored but never shown
+64. Updating render components in place instead of rebuilding them on every edit is cheap hygiene — but check a crash address against history before blaming it
+65. A loader you built yourself lets you turn crash addresses into function names
+66. Loading a class from disk in the middle of a staggered restore lets the engine run the queued callbacks INSIDE the running one
+67. A script-side array walked repeatedly in a tight loop destabilises the scripting bridge — read it once and cache the answer
+68. Test on the scripting loader your players actually use — a locally built copy can silently end up installed
+69. Delayed script callbacks run on a separate thread that shares the interpreter with the game thread — the likely source of random scripting-state corruption
+70. A self-rescheduling timer chain with an unguarded error dies silently — and leaves its temporary state switched on forever
+71. Raw static meshes as spawnable, text-bearing decor: rotate the mesh component, key the type on class plus mesh, and read bounds with the out-table form
+72. Quiet mode for a script mod: defer every timer callback while heavy game-thread work runs — and why moving timers onto the game thread breaks rendering (2026-10-01)
+73. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+74. A raw mesh spawned inside a loot/pickup wrapper is passthrough until its collision is forced to Block (2026-10-01)
+75. Reloading a script mod can leave its timers stale — relaunch instead (2026-10-01)
 
 ---
 
@@ -4404,3 +4442,226 @@ the actor's own summoner) rather than assigned an independent value. When a live
 walk bottoms out at a compiled tag-query/expression-tree-shaped struct field, an external asset-export
 tool that can resolve and print that struct's real configured contents in readable form is worth
 reaching for immediately, rather than trying to decode it through further live reflection.
+
+---
+
+## 55. A script-reflection method can be unbound on one actor class while others on the same reference work (2026-09-29)
+
+**Symptom**: calling `actor:K2_SetActorScale3D({...})` on one prop class failed with `attempt to call a TrivialObject value (method 'K2_SetActorScale3D')`, while the same actor reference answered `K2_GetActorLocation`/`K2_GetActorRotation` fine. The tell was only visible once the pcall's error TEXT was printed — a bare `ok=false` hid it.
+
+**Meaning**: the binding layer returned a placeholder object for that method name on that class — a per-class binding gap, not a stale or invalid reference.
+
+**Fix / how to apply**: for any "set a transform property" call, chain fallbacks and report which one worked: (1) the actor-level function, (2) the root component's own function (`RootComponent:SetWorldScale3D`), (3) a plain property write on the root component (`RootComponent.RelativeScale3D = {...}` — a parentless root's relative scale is its world scale). Do the same for the matching read. Always print the failing pcall's message, and add a small console diagnostic that reports each gate (target exists? recognized? which method worked? before/after value) so "it doesn't work" can be answered from one command.
+
+---
+
+## 56. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes (2026-09-29)
+
+Use the hi-DPI mechanism: after the platform backend's NewFrame and before `ImGui::NewFrame()`, set `io.DisplaySize /= scale` and `io.DisplayFramebufferScale = (scale, scale)`. The whole frame lays out at the logical size and renders scaled up; in 1.92 the font rasterizer density follows the framebuffer scale, so text stays crisp. The Win32 backend gets mouse positions from `WM_MOUSEMOVE` client coordinates, so divide those by the scale in your own window procedure before forwarding to the backend.
+
+Two traps: (1) `DisplayFramebufferScale` persists across frames (the backend only resets `DisplaySize`), so skipping the assignment when the scale returns to 1.0 leaves the old scale active and text stays enlarged — set it every frame. (2) When the native window is also resized by the scale and capped to the monitor, always compute the new size from a remembered base (1x) size, not the current size, or scaling back down lands at the wrong ratio; update the base when the user drags the window (compare against the last size you applied), and skip that check while the window is collapsed or minimized.
+
+---
+
+## 57. In Dear ImGui a row's height is its tallest item (2026-09-29)
+
+A tall button (e.g. spanning two rows) placed with `SameLine()` beside short buttons makes the row as tall as the tall button, so the next auto-placed line starts below it — leaving a full-row gap under the short buttons. Adjusting `ItemSpacing`, adding gap terms, or zeroing the vertical spacing does not fix it. Capture `ImGui::GetCursorPos()` as an origin, place every button with `SetCursorPos` from it, then `SetCursorPos` below the block and add a zero-size `Dummy` so the window's content bounds account for it.
+
+## 58. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs (2026-09-30)
+
+**Symptom**: a `TextRenderComponent` attached to an actor, with its text, size and colour all reading back correctly and `bVisible=true`, shows nothing. `GetTextLocalSize()` returns width 0 for some fonts and a real width for others.
+
+**Meaning**: the component builds its mesh from a font's pre-rasterised glyph pages. Only fonts imported as OFFLINE fonts (with texture pages) work. The engine's `RobotoDistanceField` is one (and is the component's default). Plain `Roboto`, `DroidSansMono`, and the game's own UI fonts are runtime (composite) fonts: they resolve, assign and read back without error and draw nothing.
+
+**Fix / how to apply**: read `GetTextLocalSize().Y` after setting the text — it is an objective "did this font produce glyphs" check. To use a custom look, bake an offline distance-field font (next entry). A pak that replaces the `RobotoDistanceField` asset restyles every default-font text globally, but it is cosmetic: text works without it. Also: a material swap is NOT a way to get a different look or glow — only the default text material understands the distance-field font; any other material paints each glyph's whole quad as a solid rectangle.
+
+---
+
+## 59. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs (2026-09-30)
+
+**Recipe**: run the editor command-line build with `-ExecutePythonScript`. In Python: make the TTF visible to the OS font system for THIS process only (`ctypes.windll.gdi32.AddFontResourceExW(path, 0x10, 0)`, FR_PRIVATE — nothing is installed); create `unreal.TrueTypeFontFactory()`; fetch `import_options` and its `data`; set it with `data.import_text('(FontName="…",Height=64.0,bUseDistanceFieldAlpha=True,DistanceFieldScaleFactor=16,TexturePageWidth=1024,TexturePageMaxHeight=1024,XPadding=12,YPadding=12,ExtendBoxTop=…,ExtendBoxBottom=…,ExtendBoxLeft=…,ExtendBoxRight=…,bIncludeASCIIRange=True,…)')`; `create_asset(name, dir, unreal.Font, factory)`; save. Cook with `-run=Cook -Map=<a>+<b>+… -cooksinglepackage` — cook every font in ONE invocation, because a later single-package cook clears the earlier one's output — then stage under the game's folder layout and convert with `retoc to-zen`. Fonts live in a mod namespace (`/Game/Mods/…`); load them by the full `Package.Asset` path through an asset-registry-backed resolver (a bare package-name `LoadAsset` silently finds nothing).
+
+**Conversion defects and their causes**:
+1. **Specks beside a letter** (e.g. under an "i"): the distance-field spread leaks into the neighbouring cell → raise `XPadding`/`YPadding` (4 → 12).
+2. **Descenders cut off** (g, y): the importer draws each glyph into a box sized by the font's DECLARED descent. Some fonts declare less than their glyphs need (one declared 428 units while its "g" reaches −735). `ExtendBoxBottom` does NOT fix this — the clipped pixels were never drawn. Correct the declared metrics (`hhea.descent`, `OS/2.usWinDescent`, `sTypoDescender`) in a copy of the font with `fontTools`, then bake from the copy.
+3. **A script letter's swash cut on one side**: script fonts overhang their advance width (measured: `o` 9.6% of the em, `f` 7.4%, `j` 15.6% on the left). Extend the box sideways — but that alone pulls in slivers of the adjacent letter, so also raise the padding between glyphs.
+4. **A font that simply loses letters** (an old hand-drawn TTF lost every "e" in five different setting combinations): drop it; no setting fixed it.
+
+**Layout levers at runtime**: per-character spacing is `HorizSpacingAdjust` / `SetHorizSpacingAdjust` (NOT `HorizontalSpacingAdjustment`) in the font's own pixel units — a 64px bake needs values of 4–10 to be visible. Line pitch, real line height and a vertical shift for the whole block differ per font (script fonts need more room than the default); keep them in a per-font table.
+
+---
+
+## 60. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable" (2026-09-30)
+
+Read each font's own licence file before baking it into anything you ship. Patterns met: **"Testware"/permissive** (free commercial and non-commercial, no permission needed — credit anyway); **CC BY 4.0** (credit, link to the licence, and indicate changes; converting to a game asset and adjusting its metrics are changes); **SIL OFL 1.1** (bundling and converting allowed, but a converted asset must not carry the font's Reserved Font Name — name the asset generically); **"personal use only" / demo** and **EULA that forbids distributing converted fonts** (not shippable even when free — a public mod download is a distribution). Bake a non-shippable font for private testing if you like, but keep its asset, pak and cooked output out of anything you publish (and delete them afterwards so they cannot leak in). Ship a credits file and each font's own licence text; do not ship the original font files.
+
+---
+
+## 61. Colour written to a text-render component is treated as linear, not sRGB (2026-09-30)
+
+`TextRenderColor` is a plain 8-bit colour that the engine treats as LINEAR light and then gamma-encodes for display. Feeding it the bytes a colour picker produced (sRGB) makes everything washed out and too light: a swatch of (38,153,51) displayed as roughly (107,204,122). Convert sRGB → linear before writing (`c<=0.04045 and c/12.92 or ((c+0.055)/1.055)^2.4`, ×255). Consequence: very dark colours collapse into a handful of 8-bit values, so two near-black shades may look identical.
+
+---
+
+## 62. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce (2026-09-30)
+
+To make text (or any small object) ignore world light and shadow, put it on an otherwise-unused lighting channel (`SetLightingChannels(false,false,true)` on the primitive) and light it with one white, shadowless point light set to the SAME single channel — the light then reaches nothing else. Two traps: (1) set the light's own channels through its fields in place, and read them back (a whole-table assignment did not stick); (2) lighting channels mask only DIRECT light — the global-illumination system still adds the light's indirect bounce to the surroundings and shows up as a bright "bubble" on nearby floor, even with both on the isolated channel. Set the light's `IndirectLightingIntensity` and `VolumetricScatteringIntensity` to 0. Use flat falloff (inverse-square off) for an even result across a flat face. Keep the light between edits; do not rebuild it unless its parameters changed.
+
+---
+
+## 63. A render-state property written from a non-game-thread callback can be stored but never shown (2026-09-30)
+
+**Symptom**: a font (or similar) assigned to a component reads back correctly but the screen keeps the old one, while the same call from a console command works. Size and colour changes from the same callback DO appear.
+
+**Meaning**: `ExecuteWithDelay`-style callbacks are not guaranteed to run on the game thread. Setter functions refresh the component themselves; a bare property write does not, and its refresh only lands from the game thread.
+
+**Fix**: run anything that changes how a component renders inside `ExecuteInGameThread`, and call the component's own setter (`SetFont`) as well as writing the property. Verify by logging what the component reports it is actually using, not what you asked for. Also: a "TrivialObject" value read back from a property you just wrote means that property name does not exist on that class — the write was silently ignored.
+
+---
+
+## 64. Updating render components in place instead of rebuilding them on every edit is cheap hygiene — but check a crash address against history before blaming it (2026-09-30)
+
+**Symptom**: repeated crashes at the same address inside the game's own executable, each seconds after an in-game edit that destroyed and rebuilt several text components and a light, with no scripting-layer frame in the stack and a null pointer.
+
+**What we did**: kept the light between edits (rebuild only if its parameters changed) and updated the text components in place (`K2_SetRelativeLocationAndRotation` plus the usual setters) whenever the row count was unchanged, with a one-time probe that the in-place move works, a per-edit check that it landed, a fallback to rebuild, and a short minimum gap between edits. Destroying and recreating native render objects many times a second is churn worth avoiding regardless.
+
+**The caveat, found afterwards**: that exact crash address was already present in dumps from a week BEFORE the feature existed. It is a long-standing recurring crash, so the edit churn was at most a contributing trigger. Compare a dump's module+offset against your whole crash history before building a theory around recent code — a single address is a fingerprint that tells you recurrence from novelty in minutes.
+
+---
+
+## 65. A loader you built yourself lets you turn crash addresses into function names (2026-09-30)
+
+**Symptom**: dozens of crash dumps, all with the same `UE4SS.dll + 0x…` address, and no way to tell what they are.
+
+**Meaning/how to check**: compare the installed `UE4SS.dll` to the one your own build produced (size + hash). If they match, its `.pdb` resolves every offset: load the PDB with the OS debug-help library (`dbghelp`: `SymInitializeW`, `SymLoadModuleExW` with any fake base and the image size, `SymFromAddrW`, `SymGetLineFromAddrW64` at `base + offset`). A game-log callstack that prints a source path from your own machine is the giveaway that you have symbols. The game executable usually has none. Read the FAULTING context from the dump's exception stream (x64 `CONTEXT`: RSP at +0x98, RIP at +0xF8, general registers from +0x78) — the thread list's snapshot is taken after the fault and shows the crash handler. A register holding a random 64-bit pattern while the faulting frame is a table lookup in the scripting runtime's own source (`ltable.c`, `lapi.c`) means the script state's data was freed or overwritten.
+
+---
+
+## 66. Loading a class from disk in the middle of a staggered restore lets the engine run the queued callbacks INSIDE the running one (2026-09-30)
+
+**Symptom**: log shows `Asset loaded`, then the very next native call fails with "cannot be called with 0 parameters", then `Hook threw exception: "Ref was not function" … removing hook!` — after which no delayed action ever runs again that session (a restore reports N of M spawned and 0 movers).
+
+**Meaning**: a restore that schedules each next spawn on a timer WITHOUT waiting for the current one leaves several callbacks queued at once. A synchronous `LoadAsset` inside one lets the engine process that queue re-entrantly, corrupting the running script call and eventually the callback table.
+
+**Fix**: (1) PRE-LOAD first: collect the classes the restore needs, find those not in memory, and load them one at a time, scheduling the next load only after the previous returned (log `Preload n/N -> class` BEFORE each), and only then start spawning. (2) Chain the spawn steps the same way — schedule the next step from INSIDE the current callback after it finishes, with the step body in `pcall` so an error cannot stall the chain. Result: a restore that previously died at entry 24 of 29 completed all 40.
+
+---
+
+## 67. A script-side array walked repeatedly in a tight loop destabilises the scripting bridge — read it once and cache the answer (2026-09-30)
+
+**Symptom**: crashes inside the scripting runtime's table code while a restore applies per-piece customisations; the breadcrumb log shows the same 11-element native array read element-by-element three times in under a second (one walk per piece type) and dying on the third.
+
+**Fix**: walk the array ONCE per actor and record every entry (including "not present"), answer later lookups from that map, and invalidate it only when the array's element COUNT changes, a cached target turns invalid, or ~20 seconds pass. Reading the count is cheap; reading elements is what destabilises. If an earlier fix for this pattern exists on one code path, check every other path that does the same walk.
+
+---
+
+
+---
+
+## 68. Test on the scripting loader your players actually use — a locally built copy can silently end up installed (2026-09-30)
+
+**Symptom**: after a "rollback" to the published release, every crash and log was still coming from a locally built loader: the installed library was byte-identical to the local build and carried the local build's modification time.
+
+**Why it matters**: crash addresses, hook behaviour and even which scripting functions exist differ between builds, so results from a non-stock loader do not transfer to players. A fix that depends on a patched loader cannot ship at all.
+
+**What to do**: check the build hash and the version/commit line at the top of the loader's log at the start of every session; keep the local build under a different file name next to the installed one; keep every fix on the script or companion side. A file copied in Explorer keeps the SOURCE's modified date, so a replaced file whose date still matches your own build was never replaced.
+
+
+---
+
+## 69. Delayed script callbacks run on a separate thread that shares the interpreter with the game thread — the likely source of random scripting-state corruption (2026-09-30)
+
+**UPDATE 2026-10-01 — the shim described under "Mitigation" below does not work; see section 72.** Routing every delayed call onto the game thread crashed the renderer (a D3D12 fatal) both at launch and when switched on later. The theory (script code on two threads at once) held up; the fix is section 72's quiet mode.
+
+**Symptom**: a pile of unrelated-looking faults — the loader removing its own tick hook ("registry reference was not a function"), `bad argument ... (FILE* expected, got FILE*)` from a plain `tostring`, a method returning a function instead of a string, and crashes inside the interpreter's table lookup with garbage register values — most often in the middle of heavy script work such as rebuilding several text components.
+
+**Cause (from reading the loader's source; not reproduced)**: the delayed/async helpers (`ExecuteWithDelay`, `ExecuteAsync`, `LoopAsync`) run their callbacks on the loader's own async thread, which uses an interpreter thread that shares the registry, string table and garbage collector with the game thread, and no lock covers the call. A mod that schedules hundreds of these callbacks has script code running on two OS threads at once.
+
+**Mitigation that stays in the mod**: route every delayed call through the loader's game-thread variant (`ExecuteInGameThreadWithDelay`) with one shim at the very top of the entry script (feature-detected, falling back to the original on error or when the function is missing, and switchable by a config flag). The cost is frame-granular timing and no firing during a long hitch. Verify with a long session of the workload that used to crash, and keep the switch.
+
+**Side facts**: reloading a mod does not cancel its pending timers, so every reload multiplies timer loops (duplicate "scan" lines in the same second) — a fresh launch is the clean test; and on this build every custom console command logged "handler must return true or false" followed by the engine's own "command not recognized" even though the handler ran and returned true (unexplained, not fatal by itself).
+
+
+---
+
+## 70. A self-rescheduling timer chain with an unguarded error dies silently — and leaves its temporary state switched on forever (2026-09-30)
+
+**Symptom**: a "fast-forward the clock to hour X" helper left the clock racing at the fast rate and the window's "busy" lock on indefinitely.
+
+**Cause**: the poll callback rescheduled itself as its LAST statement; an error anywhere inside it (here from converting a value to text) skipped the reschedule, so nothing was left to restore the original speed or clear the flag.
+
+**Fix**: wrap the whole body in `pcall`; on any error abort to a safe state (restore the saved original value, clear the flag, re-enable what was disabled) and reschedule anyway; add a watchdog on the lock itself (a flag that has been set far longer than the longest legitimate run is declared dead and cleared); never convert values of uncertain type with `tostring` — use `tostring(tonumber(x))` when a number is expected.
+
+
+---
+
+## 71. Raw static meshes as spawnable, text-bearing decor: rotate the mesh component, key the type on class plus mesh, and read bounds with the out-table form (2026-09-30)
+
+**Pieces**: a lootable-item wrapper actor with its mesh forced to any static mesh becomes inert decor (the same trick as a raw-mesh test spawn). Many different meshes then share ONE class.
+
+**Base orientation**: a mesh that needs to start turned (a banner whose face points sideways, a plank lying flat) is rotated on its MESH COMPONENT (`K2_SetRelativeRotation`) in the same function that assigns the mesh, keyed by mesh path — it then holds on spawn and on every restore, and does not fight the placement code that owns the actor's own yaw.
+
+**Per-mesh behaviour**: because the class is shared, any per-object table (here: where text may be drawn) must be keyed on class AND the mesh's short name. A table entry can also carry a row limit (one-line boards).
+
+**Sizing without a ruler**: `GetActorBounds(false, origin, extent, false)` with out tables returns the world bounds; take the centre offset into the actor's own frame (rotate by -yaw). Probe with the object yawed near 90 degrees to read widths cleanly — an axis-aligned box of a rotated object is inflated, which overstates thickness.
+
+**Effects**: a looping particle component can be switched off by `SetAutoActivate(false)`, `Deactivate()`, hide, and re-asserting a few times; destroying it has no proven-safe precedent. Gameplay-cue actors used by the build tool are recycled by the engine rather than destroyed, so stale ones sit in the world and must be excluded from any "nearest thing in front of me" probe.
+
+
+---
+
+## 72. Quiet mode for a script mod: defer every timer callback while heavy game-thread work runs — and why moving timers onto the game thread breaks rendering (2026-10-01)
+
+**Symptom**: the section-69 family — a crash inside the interpreter's table lookup, the faulting register holding ASCII text (a freed table whose memory was reused by a string), always partway through a burst of heavy script work (rebuilding several text components) — most often after a few repeats, and much faster when the mod's UI window was open than closed.
+
+**What did not work**: (1) sending every delayed callback to the game thread with the loader's game-thread variant. Run from a mod with a few hundred timers it crashed the renderer — once at launch, right after engine init, and again 0.3 s after being switched on mid-game (`hr failed ... E_INVALIDARG` in the D3D12 command-list code). (2) Stopping the interpreter's garbage collector for the duration of the heavy work. (3) Avoiding one suspect API call. None changed the crash.
+
+**What did work (three script-only changes)**:
+1. **Audit the recurring timers.** A mod that talks to a companion UI through request files ends up polling dozens of files several times a second on the async thread. List every self-rescheduling loop and its interval. A pile of old numbered experiment loops each waking five times a second to check an empty variable were switched off behind a config flag.
+2. **Idle the UI pollers while the UI is closed.** Have one loop read the "window is open" flag and stamp it (and a timestamp) into a table field; every poller checks that stamp and skips its body when the window has been closed for a second or two. Fail open — if the stamp is stale, do nothing special. Keep ungated anything that carries a signal back to the UI (a window-toggle hotkey counter), anything doing ongoing work (a camera tick), and the loop that reads the flag.
+3. **Quiet mode.** Wrap the global delayed-call function once, at the very top of the entry script, before anything else loads:
+
+```lua
+local rawDelay = ExecuteWithDelay
+local depth, quietUntil = 0, 0
+function SetQuiet(on)                          -- counter, so nested jobs do not clear each other
+    local now = os.clock()
+    if on then
+        if now > quietUntil then depth = 0 end -- a stale count heals itself
+        depth = depth + 1; quietUntil = now + 5.0
+    elseif depth > 0 then depth = depth - 1 end
+end
+ExecuteWithDelay = function(ms, fn)
+    local function guarded()
+        if depth > 0 and os.clock() < quietUntil then return rawDelay(40, guarded) end  -- not its turn: re-arm, run nothing
+        return fn()
+    end
+    return rawDelay(ms, guarded)
+end
+-- optionally the same around every game-thread job:
+local rawGT = ExecuteInGameThread
+ExecuteInGameThread = function(fn)
+    return rawGT(function() SetQuiet(true); local ok, err = pcall(fn); SetQuiet(false); if not ok then error(err, 0) end end)
+end
+```
+
+   The counter is a plain upvalue, so the async thread touches no shared table to learn it should wait; a deferred callback still runs later and reschedules itself, so timer chains survive. Bracket any known heavy burst with `SetQuiet(true)` / `SetQuiet(false)` (the wrapped game-thread helper does this for every queued job).
+
+**Result**: many repeats of the previously crashing operation with the window open, no crash, and the user also reported earlier consistent crash points (moving objects with the arrow keys, changing character customizations) going away. It narrows the overlap rather than adding a lock, so keep triaging any new crash by its first line (the interpreter's own module versus the game executable — the latter is a different, unrelated family).
+
+**Related finds**: (a) When a companion window and the script mod both react to the same key press, make the script side wait a moment and re-check the window state before sending its own toggle, or the window closes and immediately reopens. (b) On the stock loader, every custom console command logs "handler must return true or false" even when the handler returns true — noise, not a handler bug. (c) A native (C++) mod avoids this whole class of problem because it shares no interpreter state; porting the heaviest script path to native code is the long-term alternative.
+
+
+---
+
+## 73. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+
+A companion UI that talks to a script mod through request files has to cope with a button that is HELD: the UI fires it many times a second but the script only looks every 100-400 ms. A single-slot request file (truncate and write) keeps only the last press, so a held orbit/zoom/move button drops almost every step. Make the UI APPEND one small line per press or repeat (`ORBIT:4.0`, `ZOOM:+1`) and have the script read the whole file, delete it (truncate it if the delete loses a race), sum the batch, cap how many lines one drain accepts, and apply the total ONCE on the game thread. Enable the repeat in the UI toolkit (Dear ImGui: `PushButtonRepeat(true)` around the buttons). Keep the script side stateless about which view is active — it already knows — so the UI sends no mode tag.
+
+## 74. A raw mesh spawned inside a loot/pickup wrapper is passthrough until its collision is forced to Block (2026-10-01)
+
+Spawning an arbitrary static mesh by wrapping it in the game's dropped-item actor gives you a pickup trigger, not a physical object: the wrapper's collision responds Overlap by design, so you can walk through the mesh. Fix: on the mesh component AND the actor's root, call `SetCollisionEnabled(3)` (query and physics) and `SetCollisionResponseToAllChannels(2)` (block), plus `SetActorEnableCollision(true)`. Apply it when a placement is confirmed (a follow-the-camera placement loop otherwise leaves the state wrong) and again whenever the object is restored. Test it first with a small console command that applies the calls to the selected object and reads back the collision state and the mesh asset's collision shapes (convex/box/sphere/capsule counts and the collision trace flag): if the readback says Block and you still pass through, the mesh simply has no collision shapes and a box collision component sized from its bounds is the fallback. Keep a per-mesh list so only the pieces you want solid are (wall hangings can stay passthrough).
+
+## 75. Reloading a script mod can leave its timers stale — relaunch instead (2026-10-01)
+
+A mod-reload console command restarts the script state but does not cancel the old state's pending delayed callbacks. In one session, about two minutes after a reload every timer chain stopped: the mod's UI stopped responding, and a key that depended on a timer-published counter could no longer bring the UI back, while key binds and console commands (which do not use timers) kept working. No error line was logged. Symptoms to recognise: a status file the mod rewrites every few hundred milliseconds with a frozen modified time, and the last timer-driven log line long ago while key handlers still log. Treat the reload command as a development convenience, never as a deploy path; tell users to restart the game, and be wary of a design where a UI-critical key (open/close the window) waits on a timer.
