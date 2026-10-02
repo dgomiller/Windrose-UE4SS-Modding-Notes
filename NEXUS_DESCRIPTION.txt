@@ -86,6 +86,10 @@ Everything here was learned building real, shipping mods ([url=https://www.nexus
 [*]73. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
 [*]74. A raw mesh spawned inside a loot/pickup wrapper is passthrough until its collision is forced to Block (2026-10-01)
 [*]75. Reloading a script mod can leave its timers stale — relaunch instead (2026-10-01)
+[*]76. Saved per-object data keyed by position loses its owner when the object moves — re-key it (2026-10-01)
+[*]77. Sequential restore chains: make the completion callback idempotent — duplicate timer chains share the cursor and each one fires it (2026-10-01)
+[*]78. A crash dialog freezes only the thread that crashed — that tells you which thread (2026-10-01)
+[*]79. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
 [/list]
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too, because a documented dead end saves someone else the same hours: stale UObject pointers, native crashes with zero pcall-catchable trace, Mercuna navigation (not the UE navmesh), why a property write can report success and never render, DXGI/D3D hooking pitfalls, and more.
