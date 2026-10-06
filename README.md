@@ -98,34 +98,35 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 62. A live probe showing a real AI/movement component stack on an actor class is not proof a specific behavior is active — confirm by observing native, unmodified behavior directly
 63. A standard "stop AI logic" call doesn't reliably freeze every actor's movement — zeroing the movement component's own speed directly is a robust, mechanism-agnostic fallback
 64. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while leaving its real combat animation completely unreachable — the attack sequence can be baked directly into that specific character family's own animation graph, not driven through a generic system
-65. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
-66. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
+65. A proven alternative to the foreign-AnimBP wall: spawn a genuine instance of the target class and drive it in lockstep with a hidden player, instead of grafting its controller/animation pair onto a different actor
+66. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
+67. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
 
 **Part 10 — Rendering: text, fonts, lighting, camera and time**
 
-67. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
-68. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
-69. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
-70. Colour written to a text-render component is treated as linear, not sRGB
-71. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
-72. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
-73. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
-74. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+68. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
+69. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
+70. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
+71. Colour written to a text-render component is treated as linear, not sRGB
+72. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
+73. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+74. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+75. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
 
 **Part 11 — UI, menus and companion mods**
 
-75. Compiled C++ UE4SS mods — rendering an interactive overlay safely
-76. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
-77. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
-78. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
-79. In Dear ImGui a row's height is its tallest item
-80. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
-81. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
-82. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
-83. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
-84. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
-85. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
-86. Integrating with the "R5 Mod Settings" companion mod — registering a settings page, reading values back, keybind vs. toggle live-update rules (and a real crash trap), and a more scalable auto-generated-manifest pattern
+76. Compiled C++ UE4SS mods — rendering an interactive overlay safely
+77. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+78. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+79. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
+80. In Dear ImGui a row's height is its tallest item
+81. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
+82. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+83. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
+84. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
+85. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
+86. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
+87. Integrating with the "R5 Mod Settings" companion mod — registering a settings page, reading values back, keybind vs. toggle live-update rules (and a real crash trap), and a more scalable auto-generated-manifest pattern
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

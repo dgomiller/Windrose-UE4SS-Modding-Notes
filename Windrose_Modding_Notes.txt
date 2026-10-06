@@ -144,21 +144,22 @@ PART 9 — AI, movement and factions
 62. A live probe showing a real AI/movement component stack on an actor class is not proof a specific behavior is active — confirm by observing native, unmodified behavior directly
 63. A standard "stop AI logic" call doesn't reliably freeze every actor's movement — zeroing the movement component's own speed directly is a robust, mechanism-agnostic fallback
 64. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while leaving its real combat animation completely unreachable — the attack sequence can be baked directly into that specific character family's own animation graph, not driven through a generic system
-65. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
-66. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
+65. A proven alternative to the foreign-AnimBP wall: spawn a genuine instance of the target class and drive it in lockstep with a hidden player, instead of grafting its controller/animation pair onto a different actor
+66. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
+67. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
 
 PART 10 — Rendering: text, fonts, lighting, camera and time
-67. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
-68. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
-69. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
-70. Colour written to a text-render component is treated as linear, not sRGB
-71. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
-72. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
-73. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
-74. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+68. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
+69. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
+70. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
+71. Colour written to a text-render component is treated as linear, not sRGB
+72. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
+73. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+74. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+75. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
 
 PART 11 — UI, menus and companion mods
-75. Compiled C++ UE4SS mods: rendering an interactive overlay safely
+76. Compiled C++ UE4SS mods: rendering an interactive overlay safely
     75a. A relative path resolves against the GAME's working directory, in C++ too
     75b. Hooking a DXGI/D3D vtable function: an inline detour, never a raw vtable swap
     75c. Capture the REAL command queue by hooking swapchain creation, not by guessing
@@ -173,7 +174,7 @@ PART 11 — UI, menus and companion mods
     75m. A toggle reachable from BOTH the game and a companion C++ window needs ONE owner, not two
     75n. Constructing real UMG widgets natively from C++ — the same primitives a Lua UMG binding uses, just called directly
     75o. A property's "official" C++ accessor can resolve through a WRONG vtable offset for a specific game build, and crash uncatchably — prefer a raw memory write when the layout is simple and known
-    75p. Binding a native multicast delegate (e.g. a UMG button's click event) from C++, avoiding the same vtable risk as §75o
+    75p. Binding a native multicast delegate (e.g. a UMG button's click event) from C++, avoiding the same vtable risk as §76o
     75q. An inherited UFUNCTION can intermittently fail to resolve on an otherwise-valid, freshly-constructed object, for reasons not fully root-caused — build self-healing verification, not just an existence/liveness check
     75r. Before claiming a native keybind, audit EVERY installed mod's key configuration, not just your own mod's
     75s. A native post-hook scoped to one instance can still fire from unrelated causes — the mechanism isn't the risk, the CHOICE of bound function is
@@ -183,17 +184,17 @@ PART 11 — UI, menus and companion mods
     75w. Combining a broad-but-reliable native signal with a cheap, independent, per-instance filter beats hunting for a "perfectly exclusive" one
     75x. A C++ mod's per-frame update hook call rate can silently decay from ~180/sec to ~1/sec over the first ~90 seconds of every session, for a cause not yet root-caused — and a scripting layer's own timer accuracy is NOT a reliable proxy for whether it's affected
     75y. A generated integration manifest is only as complete as its OWN translation table — adding a new value to the primary consumer doesn't automatically reach a SECONDARY one
-76. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
-77. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
-78. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
-79. In Dear ImGui a row's height is its tallest item
-80. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
-81. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
-82. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
-83. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
-84. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
-85. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
-86. Integrating with the "R5 Mod Settings" companion mod
+77. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+78. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+79. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
+80. In Dear ImGui a row's height is its tallest item
+81. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
+82. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+83. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
+84. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
+85. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
+86. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
+87. Integrating with the "R5 Mod Settings" companion mod
 
 ---
 
@@ -1424,7 +1425,7 @@ When a native crash leaves a dialog up and the game keeps running behind it (tim
 
 One crash produced no dump file at all, but the game's own log (`%LOCALAPPDATA%/<Game>/Saved/Logs/<Game>.log`) contained a `Crash Stack Trace` block with absolute addresses per module. On a given boot the scripting-runtime DLL and the game executable loaded at the same bases in every dump taken that session, so an earlier dump's module list converts the logged addresses to offsets that can be compared with earlier crashes. The log's synchronous-asset-load warnings (`FlushAsyncLoading` call stacks) share their bottom frames with the crash stack when both run through the same thread's script callbacks, which is a quick way to tell the crash was on the thread executing the mod's queued callbacks (the game thread) and not a timer thread. Two crashes in one session had different offsets (one in the game executable at a despawn, one in the scripting DLL right after spawning), so do not assume a new crash is the previous one. Unproven, recorded as a hypothesis: a freshly spawned character rebuilds its composite mesh for a couple of seconds (the log shows clothing-recreation lines), and a mod that reads its animation, navigation or movement state in that window may be the trigger; the mitigation tried was to leave a new actor completely alone for 3 seconds, and moving the mod's per-tick work onto the game thread (a per-callback game-thread hop, rescheduled by a sibling timer call, never nested) was done at the same time, so neither is individually confirmed.
 
-See also §75h (minidump analysis without a full debugger), §30 (turning crash addresses into function names) and §31 (what a crash dialog that leaves the game running tells you).
+See also §76h (minidump analysis without a full debugger), §30 (turning crash addresses into function names) and §31 (what a crash dialog that leaves the game running tells you).
 
 ---
 
@@ -3980,13 +3981,52 @@ accepting a different (donor's own) combat behavior instead.
 
 ---
 
-## 65. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
+## 65. A proven alternative to the foreign-AnimBP wall: spawn a genuine instance of the target class and drive it in lockstep with a hidden player, instead of grafting its controller/animation pair onto a different actor
+
+Another community mod facing the exact same wall (see §64 above: a foreign controller/
+animation-instance pairing fixes locomotion but real combat animation never renders) solved it by not
+grafting anything at all. The player's own pawn, camera and controls stay completely untouched. A real,
+unmodified instance of the target actor class is spawned at the player's location — its own AI brain
+is stopped, its deactivation/significance-management components are disabled (never destroyed; destroying
+them crashed, a stale-pointer problem), and its movement component's tick is turned off so it can't fight
+being repositioned every frame. The player's own visible meshes are hidden, but the player's base mesh is
+kept ticking its animation (not literally hidden from the animation system, only from rendering) because a
+hook on the PLAYER's own animation-instance class is what drives a per-frame callback that teleports the
+spawned actor onto the player's current location and rotation every tick. A slower ~250ms timer chain is
+the fallback placement path if that hook ever goes stale.
+
+Because the spawned actor is a real, complete instance of its own class, its animation graph is never
+foreign to it — the cross-class graph problem in §64 above doesn't exist here, since nothing is ever
+paired across classes. The hard problem shifts instead to a BRAINLESS spawn with no live AI target: its
+own attack ability either refuses to activate or activates and does nothing, because the ability has
+nothing to aim at and no live combat state to pick a montage from. Fix: manually hand the ability the
+montage it would otherwise have chosen itself, briefly fake a target in the spawn's own AI memory (the
+same key its native ability already reads), then activate the real ability; if nothing visibly plays
+within a short window (~150ms), play the attack's own montage directly as a guaranteed fallback. Hit
+detection goes a step further and doesn't trust the spawn's live combat AI at all — it's pre-baked
+OFFLINE (reading the game's own cooked assets once, outside the running game) into per-animation
+hit-trace windows and damage numbers, then replayed against the animation's own playback clock at
+runtime, so a correctly-scaled hit never depends on a working AI/perception stack being present.
+
+**How to apply**: if a foreign controller/animation-instance graft is the wall (per §64 above), consider
+whether "drive a real instance of the target class in lockstep with a hidden actor" is viable instead —
+it trades true possession/replacement for a convincing illusion, at the cost of the controlled actor's
+own collision/hitbox technically being elsewhere (wherever the hidden actor actually is). Two smaller
+patterns from the same mod are worth reusing on their own regardless: (1) prefer a generation counter over
+a boolean guard for any timer/tick chain that can legitimately re-enter itself — a respawn firing mid-tick
+deadlocked a boolean version of the same guard (see §52 above, the same lesson independently rediscovered);
+and (2) never trust a single hook alone to keep firing every frame for something that must never stop — pair
+it with a slower poll that silently takes over if the hook goes stale and steps back once it resumes.
+
+---
+
+## 66. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
 
 Goal: make summoned characters run to catch up with a sprinting player. Raising the movement component's max walk speed (the value read back as 400–1100, and the game reverted it in only about 60 of 3,900 checks, so the write did stick) had no effect on actual speed: across roughly 570 samples out-of-combat speed sat at exactly 220, which is twice the 110 walk value. Speeds of 400–500 appeared only for a few seconds after a fight, and then the cap WAS the max-walk-speed value (they topped out at 500 even when asked for 1100). Correlating with the animation instance's combat flag: with it false, 0 of about 1,400 samples were running; with it true, about 30 of 230 were. So a combat-stance state gates the run gait and lapses a few seconds after combat; what sets it was not found (the combat, state-machine and equipment components looked identical across idle, walking and running dumps). Separately, the mod had been writing a speed-multiplier property (`CheatMovementSpeedModifer`) in a pcall for the whole project; the property does not exist on this character's movement component (it is absent from the reflection dump), so that write was a silent no-op. Lessons: (1) a write wrapped in a pcall that raises no error can still be a no-op — confirm the property name appears in a dump of that exact component; (2) before tuning speeds, log requested value, read-back and measured velocity per tick, which settled in one test what hours of guessing had not; (3) when you cannot make an NPC run, the pragmatic catch-up is a teleport beyond a distance threshold, placed behind the player (computed from the player's facing) so it never lands in front of them.
 
 ---
 
-## 66. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
+## 67. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
 
 Asked how summoned NPCs get a "level", a reflection dump of a spawned crew character showed no level, tier or rank property. The pak inventory shows each mob class carrying its own ability-system-params data asset and a default-attributes gameplay effect (`DA_<Mob>_AbilitySystemParams`, `GE_<Mob>_DefaultAttributes`, for example for each Senkamati type and the Blackbeard Grenadier), and the pawn exposes `OverriddenAbilitySystemParams` / `OverriddenAIPawnParams` properties. "Level"-style variants are separate classes with their own params (a level-2 boar is its own class), and bosses ship Easy/Normal/Hard sets for 1, 2 and 3 players. So adjusting an NPC's strength would mean swapping its params asset before it builds, scaling its attributes through its ability-system component after spawn, or applying an extra gameplay effect; none of these was tried.
 
@@ -3996,7 +4036,7 @@ Asked how summoned NPCs get a "level", a reflection dump of a spawned crew chara
 
 ---
 
-## 67. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs (2026-09-30)
+## 68. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs (2026-09-30)
 
 **Symptom**: a `TextRenderComponent` attached to an actor, with its text, size and colour all reading back correctly and `bVisible=true`, shows nothing. `GetTextLocalSize()` returns width 0 for some fonts and a real width for others.
 
@@ -4006,7 +4046,7 @@ Asked how summoned NPCs get a "level", a reflection dump of a spawned crew chara
 
 ---
 
-## 68. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs (2026-09-30)
+## 69. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs (2026-09-30)
 
 **Recipe**: run the editor command-line build with `-ExecutePythonScript`. In Python: make the TTF visible to the OS font system for THIS process only (`ctypes.windll.gdi32.AddFontResourceExW(path, 0x10, 0)`, FR_PRIVATE — nothing is installed); create `unreal.TrueTypeFontFactory()`; fetch `import_options` and its `data`; set it with `data.import_text('(FontName="…",Height=64.0,bUseDistanceFieldAlpha=True,DistanceFieldScaleFactor=16,TexturePageWidth=1024,TexturePageMaxHeight=1024,XPadding=12,YPadding=12,ExtendBoxTop=…,ExtendBoxBottom=…,ExtendBoxLeft=…,ExtendBoxRight=…,bIncludeASCIIRange=True,…)')`; `create_asset(name, dir, unreal.Font, factory)`; save. Cook with `-run=Cook -Map=<a>+<b>+… -cooksinglepackage` — cook every font in ONE invocation, because a later single-package cook clears the earlier one's output — then stage under the game's folder layout and convert with `retoc to-zen`. Fonts live in a mod namespace (`/Game/Mods/…`); load them by the full `Package.Asset` path through an asset-registry-backed resolver (a bare package-name `LoadAsset` silently finds nothing).
 
@@ -4020,25 +4060,25 @@ Asked how summoned NPCs get a "level", a reflection dump of a spawned crew chara
 
 ---
 
-## 69. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable" (2026-09-30)
+## 70. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable" (2026-09-30)
 
 Read each font's own licence file before baking it into anything you ship. Patterns met: **"Testware"/permissive** (free commercial and non-commercial, no permission needed — credit anyway); **CC BY 4.0** (credit, link to the licence, and indicate changes; converting to a game asset and adjusting its metrics are changes); **SIL OFL 1.1** (bundling and converting allowed, but a converted asset must not carry the font's Reserved Font Name — name the asset generically); **"personal use only" / demo** and **EULA that forbids distributing converted fonts** (not shippable even when free — a public mod download is a distribution). Bake a non-shippable font for private testing if you like, but keep its asset, pak and cooked output out of anything you publish (and delete them afterwards so they cannot leak in). Ship a credits file and each font's own licence text; do not ship the original font files.
 
 ---
 
-## 70. Colour written to a text-render component is treated as linear, not sRGB (2026-09-30)
+## 71. Colour written to a text-render component is treated as linear, not sRGB (2026-09-30)
 
 `TextRenderColor` is a plain 8-bit colour that the engine treats as LINEAR light and then gamma-encodes for display. Feeding it the bytes a colour picker produced (sRGB) makes everything washed out and too light: a swatch of (38,153,51) displayed as roughly (107,204,122). Convert sRGB → linear before writing (`c<=0.04045 and c/12.92 or ((c+0.055)/1.055)^2.4`, ×255). Consequence: very dark colours collapse into a handful of 8-bit values, so two near-black shades may look identical.
 
 ---
 
-## 71. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce (2026-09-30)
+## 72. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce (2026-09-30)
 
 To make text (or any small object) ignore world light and shadow, put it on an otherwise-unused lighting channel (`SetLightingChannels(false,false,true)` on the primitive) and light it with one white, shadowless point light set to the SAME single channel — the light then reaches nothing else. Two traps: (1) set the light's own channels through its fields in place, and read them back (a whole-table assignment did not stick); (2) lighting channels mask only DIRECT light — the global-illumination system still adds the light's indirect bounce to the surroundings and shows up as a bright "bubble" on nearby floor, even with both on the isolated channel. Set the light's `IndirectLightingIntensity` and `VolumetricScatteringIntensity` to 0. Use flat falloff (inverse-square off) for an even result across a flat face. Keep the light between edits; do not rebuild it unless its parameters changed.
 
 ---
 
-## 72. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+## 73. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
 
 A first-person-style camera built on a spring-arm ("boom") component has (at least) two distinct
 offset properties available, and they are NOT interchangeable even though both visually nudge the
@@ -4067,7 +4107,7 @@ direction-dependent drift.
 
 ---
 
-## 73. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+## 74. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
 
 A capsule/box collision volume configured as query-only (responds to line/sweep traces, but applies
 no physical force and doesn't obstruct movement) is often assumed to be functionally invisible to
@@ -4092,7 +4132,7 @@ channel that camera system traces against.
 
 ---
 
-## 74. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+## 75. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
 
 This game's day/night cycle component exposes a "current time of day" read (in hours) alongside a
 speed-multiplier property and a raw "world day time" property. Investigating how to reliably freeze
@@ -4128,7 +4168,7 @@ involves.
 
 ---
 
-## 75. Compiled C++ UE4SS mods: rendering an interactive overlay safely
+## 76. Compiled C++ UE4SS mods: rendering an interactive overlay safely
 
 Some Windrose mods (visible in the ecosystem: a mod-list/config manager, an in-game text-sign
 editor) prove real, fully interactive, mouse/keyboard-capable overlay windows ARE achievable —
@@ -4191,7 +4231,7 @@ rather than destroy it, if the intent is a toggleable panel rather than a one-sh
 
 ### 75g. A global ImGui context pointer means two ImGui threads in one DLL is not safe by default
 Adding a SECOND standalone window (own thread, own D3D11 device, own independent ImGui context —
-the pattern §75e calls "confirmed safe") does **not** automatically inherit that safety just
+the pattern §76e calls "confirmed safe") does **not** automatically inherit that safety just
 because the first one worked. Dear ImGui's current-context pointer is a single **global**
 variable, not thread-local, shared across the whole process no matter how many independent
 contexts exist. Two threads each calling into ImGui against their OWN context, concurrently, race
@@ -4200,7 +4240,7 @@ live: **100% reproducible crash on every single launch** once a second window/th
 added (unlike most races in this list, which are intermittent), with visible secondary symptoms
 (UI state in the FIRST, unrelated window randomly misbehaving) proving genuine cross-context state
 corruption, not just an isolated clean crash.
-**The fix is architectural, not a bigger mutex** (see §75i for why a mutex alone wasn't enough
+**The fix is architectural, not a bigger mutex** (see §76i for why a mutex alone wasn't enough
 anyway): don't run two ImGui contexts/threads in one process if it can be avoided. Collapse to a
 single window/thread/context and present what would have been separate windows as tabs of the ONE
 window instead. For a mod's own auxiliary tool UI (as opposed to something that genuinely needs to
@@ -4232,10 +4272,10 @@ a triage-level read — symbols only matter once you need to resolve frames insi
 code specifically.
 
 ### 75i. A mutex around one race can hide a second, independent race behind it
-After fixing a cross-thread ImGui race (§75g) with a mutex serializing UI calls between two
+After fixing a cross-thread ImGui race (§76g) with a mutex serializing UI calls between two
 windows' threads, the crash appeared to be gone — then came back under the same "every launch"
 reproducibility, but with a **completely different root cause**: a null D3D constant buffer,
-traced via a second minidump (§75h) to the two windows' D3D device-creation calls racing each
+traced via a second minidump (§76h) to the two windows' D3D device-creation calls racing each
 other at startup (both windows created near-simultaneously on mod load, both independently
 creating their own device/swapchain with no ordering guarantee between them).
 **Lesson**: when a fix for one identified race doesn't fully resolve an "every time" crash, don't
@@ -4243,7 +4283,7 @@ assume the fix itself was wrong before checking whether a SECOND, independent ra
 trigger window (here: "two things happening near-simultaneously at mod startup") and was simply
 masked by whichever one hit first. A fresh minidump with a genuinely different call stack (device
 creation vs. UI-library internals) is what actually proved these were two separate bugs, not one
-incompletely-fixed one. Both were ultimately made moot by the SAME architectural fix as §75g
+incompletely-fixed one. Both were ultimately made moot by the SAME architectural fix as §76g
 (collapse to one window/thread) rather than patched individually — worth checking whether an
 architectural simplification kills a whole CLASS of races before chasing each one to its own
 targeted fix.
@@ -4251,7 +4291,7 @@ targeted fix.
 ### 75j. A native key-bind hook only fires while the GAME window has OS focus — stealing focus programmatically can break a "press again to undo" key
 A key bound through the engine's own key-bind registration API is a GAME-input hook: it only
 fires while the actual game window holds OS keyboard focus, not system-wide. This matters the
-moment a mod also owns its OWN separate window (e.g. a companion tool UI, §75e/75g) that can end
+moment a mod also owns its OWN separate window (e.g. a companion tool UI, §76e/75g) that can end
 up holding OS focus instead.
 Concretely: a toggle key meant to open AND close an auxiliary window (open on press while playing,
 close on a SECOND press while playing) broke specifically for the "close" direction whenever the
@@ -4339,7 +4379,7 @@ with a hand-built params struct calls ordinary UFUNCTIONs on them (`AddChildToCa
 it's the exact sequence an existing, proven-working Lua-side UMG-building mod already performs
 via `StaticConstructObject`/`FindObject`, just invoked from native C++ instead of through the Lua
 binding layer. Two structural properties (`WidgetTree` on the root widget, `RootWidget` on the
-`WidgetTree`) only exist as UPROPERTYs with no setter UFUNCTION — see §75o for why the "obvious"
+`WidgetTree`) only exist as UPROPERTYs with no setter UFUNCTION — see §76o for why the "obvious"
 official accessor for writing those crashed, and what was used instead. Every `ProcessEvent`
 params struct must mirror the REAL target UFUNCTION's actual parameter list in order (plus a
 trailing `ReturnValue` field if it returns something) — this is standard native-call practice
@@ -4347,7 +4387,7 @@ trailing `ReturnValue` field if it returns something) — this is standard nativ
 familiar-looking as "just calling a widget setter."
 
 ### 75o. A property's "official" C++ accessor can resolve through a WRONG vtable offset for a specific game build, and crash uncatchably — prefer a raw memory write when the layout is simple and known
-Writing to `WidgetTree`/`RootWidget` (see §75n) was first attempted via the reflection SDK's own
+Writing to `WidgetTree`/`RootWidget` (see §76n) was first attempted via the reflection SDK's own
 purpose-built property accessor for object-reference properties (its equivalent of "the correct,
 supported way to set an object property from C++"). **Confirmed live: this crashed the game
 instantly, with no catchable error** — reproducible, first call, every time. Root cause: that
@@ -4364,21 +4404,21 @@ accessor is a C++ virtual function on a reflection object (property/field types,
 object itself), treat it as unverified for this specific compiled build until proven live — even
 though it's the documented/intended API — and prefer a raw memory write at a plain-old-data
 address when you can independently confirm both the address and the value's true in-memory layout
-are simple and correct.** This is a DIFFERENT risk class from §25l/§75n's "wrong params struct for
+are simple and correct.** This is a DIFFERENT risk class from §25l/§76n's "wrong params struct for
 a UFUNCTION call" — that risk is about guessing a signature; this one is about an
 internals-level version-detection table being wrong for one specific game build, something no
 amount of correct C++ on the caller's part can work around except by avoiding the virtual call
 entirely.
 
-### 75p. Binding a native multicast delegate (e.g. a UMG button's click event) from C++, avoiding the same vtable risk as §75o
+### 75p. Binding a native multicast delegate (e.g. a UMG button's click event) from C++, avoiding the same vtable risk as §76o
 Real click interaction (not just display) needed a button widget's click to reach native C++
 code. The engine's own delegate-property accessor for "add a bound function to this multicast
-delegate" is, like §75o's case, a C++ virtual function on the property-reflection object — same
+delegate" is, like §76o's case, a C++ virtual function on the property-reflection object — same
 risk class, not attempted. Instead: the delegate's own VALUE TYPE (an array of `{weak object,
 function name}` pairs) has a bind method that is a plain, non-virtual, two-field assignment —
 confirmed by reading its own definition, not assumed — and its containing array's append method
 is an ordinary template container method, also non-virtual. So: get the delegate property's raw
-storage address the same proven way as §75o, reinterpret it as its real value-type struct
+storage address the same proven way as §76o, reinterpret it as its real value-type struct
 (size-checked against the expected struct size first — a mismatch there means the assumed layout
 is wrong for this build, and the fix is to bail out cleanly rather than write through a
 wrong-sized reinterpret, not to guess further), then call the plain non-virtual bind+append
@@ -4393,12 +4433,12 @@ the game underneath, no crash from the bound function's real body actually execu
 effect of each click.**
 
 ### 75q. An inherited UFUNCTION can intermittently fail to resolve on an otherwise-valid, freshly-constructed object, for reasons not fully root-caused — build self-healing verification, not just an existence/liveness check
-After §75n/§75o/§75p were all confirmed working cleanly in one live session, a LATER session
+After §76n/§76o/§76p were all confirmed working cleanly in one live session, a LATER session
 intermittently failed: a freshly constructed widget (confirmed non-null, confirmed genuinely
 alive, confirmed its class's own function table was fully populated with a normal function count
 when checked in a working session) would nonetheless fail to resolve functions that had resolved
 perfectly moments earlier in a different session with byte-identical code. Ruled out: memory
-corruption from the delegate-binding code in §75p (reproduced the same failure with that code
+corruption from the delegate-binding code in §76p (reproduced the same failure with that code
 path fully disabled); "the class just hasn't finished loading yet" (stayed broken for 20+ seconds
 and many retries within an affected session, which is not a plausible async-loading window). Root
 cause not pinned down. **Practical fix, regardless of cause**: don't let "the cached object is
@@ -4465,7 +4505,7 @@ here too" without checking whether it's built on the exact primitive you already
 
 ### 75u. Never mutate or rebuild a widget tree synchronously from inside a native function hook's callback — it can hang the game, not crash it
 A click handler that immediately tore down and rebuilt several widgets (remove old rows,
-construct new ones) directly inside the hook callback described in §75s worked for a single,
+construct new ones) directly inside the hook callback described in §76s worked for a single,
 static widget, but froze the game solid — no crash log, no error, just a hang — the moment it ran
 for a widget whose own click was what triggered the rebuild (e.g. expanding a category, which
 both removes and adds widgets in the same handler). The callback runs while the engine's own
@@ -4497,11 +4537,11 @@ base-class one first.
 
 ### 75w. Combining a broad-but-reliable native signal with a cheap, independent, per-instance filter beats hunting for a "perfectly exclusive" one
 The eventual click-detection fix wasn't a fourth new mechanism — it was recognizing that the
-original hook-based approach from §75s already gave a real, reliable signal ("this specific widget
+original hook-based approach from §76s already gave a real, reliable signal ("this specific widget
 instance's bound function was just invoked"), just not an EXCLUSIVE one for the one event that
 mattered (a genuine click, as opposed to routine engine housekeeping calling the same function).
 Rather than search for some other bound function that might be truly click-exclusive (unverifiable
-without engine source, and this notes file's own history — §75s itself — shows that kind of
+without engine source, and this notes file's own history — §76s itself — shows that kind of
 assumption fails silently), the hook's own callback was extended to independently check, at the
 exact moment it fires, whether that SAME widget instance currently reports itself as hovered by
 the mouse (an ordinary, already-reflected getter, no extra machinery). A real click's hook fire
@@ -4545,7 +4585,7 @@ Investigating further would require inspecting the mod loader's OWN compiled int
 this mod's code) or attaching a real profiler/debugger, neither available in this setup.
 
 **Practical lesson regardless of root cause**: a companion window on its own independent OS thread
-(see §75e) is immune to this entirely — it was never discovered until a feature was built that, for
+(see §76e) is immune to this entirely — it was never discovered until a feature was built that, for
 a correctness reason (native engine calls must happen on the game thread), NEEDED the per-frame
 update hook's cadence for the first time in this project's history. **Before depending on a shared
 per-frame hook's call RATE for real-time feel (not just "eventually gets called"), measure that
@@ -4575,7 +4615,7 @@ error.
 
 ---
 
-## 76. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+## 77. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
 
 An immediate-mode GUI helper (drawing one small, reusable widget — a preview swatch, an icon button,
 anything invoked from more than one place in the same frame) was written using a fixed, literal
@@ -4597,7 +4637,7 @@ the weakest possible signal that it won't.
 
 ---
 
-## 77. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+## 78. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
 
 A tab bar built with an immediate-mode GUI library exposes a per-tab flag intended to group certain
 tabs together and keep them out of the way of the rest — the natural assumption is that this also
@@ -4622,7 +4662,7 @@ flag that turns out to solve an adjacent, differently-scoped problem.
 
 ---
 
-## 78. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes (2026-09-29)
+## 79. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes (2026-09-29)
 
 Use the hi-DPI mechanism: after the platform backend's NewFrame and before `ImGui::NewFrame()`, set `io.DisplaySize /= scale` and `io.DisplayFramebufferScale = (scale, scale)`. The whole frame lays out at the logical size and renders scaled up; in 1.92 the font rasterizer density follows the framebuffer scale, so text stays crisp. The Win32 backend gets mouse positions from `WM_MOUSEMOVE` client coordinates, so divide those by the scale in your own window procedure before forwarding to the backend.
 
@@ -4630,13 +4670,13 @@ Two traps: (1) `DisplayFramebufferScale` persists across frames (the backend onl
 
 ---
 
-## 79. In Dear ImGui a row's height is its tallest item (2026-09-29)
+## 80. In Dear ImGui a row's height is its tallest item (2026-09-29)
 
 A tall button (e.g. spanning two rows) placed with `SameLine()` beside short buttons makes the row as tall as the tall button, so the next auto-placed line starts below it — leaving a full-row gap under the short buttons. Adjusting `ItemSpacing`, adding gap terms, or zeroing the vertical spacing does not fix it. Capture `ImGui::GetCursorPos()` as an origin, place every button with `SetCursorPos` from it, then `SetCursorPos` below the block and add a zero-size `Dummy` so the window's content bounds account for it.
 
 ---
 
-## 80. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
+## 81. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
 
 A category-tree UI driven by a flat config file (one line per leaf, its display path encoded as a
 dot-delimited string like `Category.Subcategory.LeafName`) builds its nested tree purely by
@@ -4653,13 +4693,13 @@ out) rather than writing it as-is. Don't assume a one-off rename is safe just be
 
 ---
 
-## 81. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+## 82. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
 
 A companion UI that talks to a script mod through request files has to cope with a button that is HELD: the UI fires it many times a second but the script only looks every 100-400 ms. A single-slot request file (truncate and write) keeps only the last press, so a held orbit/zoom/move button drops almost every step. Make the UI APPEND one small line per press or repeat (`ORBIT:4.0`, `ZOOM:+1`) and have the script read the whole file, delete it (truncate it if the delete loses a race), sum the batch, cap how many lines one drain accepts, and apply the total ONCE on the game thread. Enable the repeat in the UI toolkit (Dear ImGui: `PushButtonRepeat(true)` around the buttons). Keep the script side stateless about which view is active — it already knows — so the UI sends no mode tag.
 
 ---
 
-## 82. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
+## 83. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
 
 A feature toggle lived as an in-memory variable on one side of a scripting/compiled-code boundary,
 mirrored to a plain status file on disk so the OTHER side (which couldn't read the first side's
@@ -4677,7 +4717,7 @@ non-default state — exactly the scenario most likely to go unnoticed during te
 
 ---
 
-## 83. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
+## 84. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
 
 A dropdown list in a compiled companion tool was generated once from a spreadsheet and pasted
 directly into the compiled source as a hardcoded array, specifically because the compiled tool
@@ -4697,7 +4737,7 @@ to take effect, unlike interpreted-language changes in the same project.
 
 ---
 
-## 84. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
+## 85. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
 
 A UI or save-data pipeline that flattens several source arrays into one ordered list (array A's
 items, then array B's items, then array C's items...) and assigns each flattened position a
@@ -4717,13 +4757,13 @@ still looks correct in isolation.
 
 ---
 
-## 85. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
+## 86. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
 
 A menu file whose entries are keyed by position in a generated roster (index N = Nth row of a flattened category list) silently points at the wrong item after a row is inserted in the middle of the roster, and every curated name and tree path lives only in that file, so deleting the menu file's section and regenerating from the game config loses it (the config holds raw asset names, not the hand-picked ones). Repair recipe: take the last good curated file as the reference, work out which current rows did not exist when it was made, drop those from the current ordered list so the remaining positions line up 1:1 with the reference's indices, validate the alignment by comparing display names on every row that carries one in the config (an exact match on all of them, up to trailing whitespace, is strong evidence the whole mapping is right), then write each curated section out with its new index, and insert the new rows by sorting on the path segments. Going forward add new rows only as a new trailing category mapped to an existing folder, and after every edit diff names-by-index against the previous version. Also check for sections that lost their separating blank line: a splitter keyed on blank lines will treat the glued pair as one block and silently skip the second.
 
 ---
 
-## 86. Integrating with the "R5 Mod Settings" companion mod
+## 87. Integrating with the "R5 Mod Settings" companion mod
 
 There's a free third-party UE4SS mod, commonly called "R5 Mod Settings" (published on Nexus as
 "Windrose Mod Settings", https://www.nexusmods.com/windrose/mods/442, by IceBoxStudio —
