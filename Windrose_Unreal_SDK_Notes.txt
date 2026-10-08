@@ -20,6 +20,23 @@ process.
 
 ---
 
+Table of contents (this is a plain-text file — search for a heading's exact wording to jump to it)
+
+1. Setting up the project
+2. Authoring content headlessly
+3. Cooking
+4. Retargeting a soft reference to the real target asset
+5. The one process rule that actually matters: cook once, edit once
+6. Verification: script it, don't eyeball it
+7. Worked example: retargeting which body mesh a class resolves to
+8. Worked example: real per-size material control (and why it's needed at all)
+9. Packaging and installing
+10. Authoring a genuinely NEW native class (not just a new data-only asset), confirmed live
+11. A genuinely new native-class Blueprint spawns fine — making it look and act like a real one is a separate, ongoing task
+12. Baking a fix instead of writing it at runtime: an inherited component's own defaults, and a new class-reference retarget technique
+
+---
+
 ## 1. Setting up the project
 
 **Prerequisite**: an Unreal Engine install matching the target game's own engine version exactly
