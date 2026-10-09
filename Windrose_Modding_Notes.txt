@@ -199,6 +199,7 @@ PART 11 — UI, menus and companion mods
 89. When a fix "doesn't work" and new diagnostic logging added to explain why also never fires, suspect an upstream wrapper silently dropping data — grep every call site before adding more logging at the same layer
 90. A relationship/faction system does not preclude a hardcoded "enemy by literal native class" rule sitting alongside it and evaluated first — confirm with an actual asset export, not by assuming a faction copy is sufficient
 91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
+92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
 
 ---
 
@@ -4733,7 +4734,7 @@ A menu file whose entries are keyed by position in a generated roster (index N =
 There's a free third-party UE4SS mod, commonly called "R5 Mod Settings" (published on Nexus as
 "Windrose Mod Settings", https://www.nexusmods.com/windrose/mods/442, by IceBoxStudio —
 https://www.nexusmods.com/profile/IceBoxStudio; this section reflects its documented behavior as of
-implementation baseline v1.1.3), that adds a `Mods` tab to the game's own existing settings screen
+implementation baseline v1.1.2), that adds a `Mods` tab to the game's own existing settings screen
 where players can toggle/tune OTHER mods' settings and rebind their keys, without hand-editing
 config files. The tab itself is owned by the mod's compiled C++ (reusing the game's own native
 setting-row, help-panel, transition, and key-binding widgets) — Lua is only a small data bridge for
@@ -4848,14 +4849,12 @@ mod can safely offer live-updating toggles through the panel, but should honestl
 keybind change needs a restart to take effect, rather than attempting a live re-bind that risks this
 crash.
 
-**A separate bug in the settings panel itself was observed and later fixed upstream, not by anything
-a registering mod does**: moving the mouse cursor quickly over the panel's own settings list crashed
-the game in an earlier R5ModSettings release — confirmed independent of row count, entry type, or
-which registered mod owned the affected row (tested down to as few as 10 rows, still reproduced). A
-later R5ModSettings update resolved it (confirmed fixed by direct live testing, 2026-10-01). Worth
-keeping in mind only as a historical repro step if an OLD cached copy of the mod is ever in play —
-check the installed R5ModSettings version before assuming a fresh settings-panel crash is this same
-bug recurring.
+**A real, separate bug in the settings panel itself, unrelated to anything a third-party mod does,
+worth knowing about rather than chasing as your own bug**: moving the mouse cursor QUICKLY over the
+panel's own settings list has been observed to crash the game — confirmed independent of row count,
+entry type, or which registered mod owns the affected row (tested down to as few as 10 rows, still
+reproduced). If a settings-panel crash report comes in, check for this specific repro step (fast
+cursor movement over the list) before assuming your own registration/manifest content is at fault.
 
 **A more scalable pattern than hand-writing the manifest literal**: rather than maintaining the
 `settings` array as a literal Lua table duplicated separately from your own mod's actual settings
@@ -4962,3 +4961,32 @@ related problem, already has the RIGHT one (`cachedId ~= currentId`), that's str
 correct pattern was already known and simply didn't get applied everywhere it needed to — a very
 targeted thing to grep for (the wrong-check function's own cache variable name, across the rest of
 the file) once you've found one instance of this bug.
+
+## 92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
+
+Building two side-by-side columns with the standard `BeginGroup()` / `EndGroup()` / `SameLine()`
+trick (no real Columns/Table widget) does not always top-align them cleanly, even though
+`SameLine()` right after `EndGroup()` is supposed to put the next item at the same Y the group
+started at.
+
+Root cause, confirmed by screenshot comparison, not by reading the library's source: if the
+FIRST column's last row before `EndGroup()` calls `AlignTextToFramePadding()` — common when
+labeling a slider or input box inline so the label's baseline matches the widget beside it —
+that row's text-baseline offset appears to leak across the following `SameLine()` into the
+SECOND column's very first item, even though that item sits inside its own, separate
+`BeginGroup()`. The two columns look visibly offset from each other as a result, with the
+second column's content sitting slightly lower than the first's.
+
+An attempted partial fix — keeping `SameLine()` but following it with an explicit
+`SetCursorPosY(topY)` to re-pin just the vertical axis — did NOT fix it; the leaked baseline
+persisted regardless. What worked was removing `SameLine()` entirely for the second column and
+using `SetCursorPos()` with BOTH axes pinned explicitly (captured once, from a single shared
+top-left reference point, before the first column's own `BeginGroup()` began) — this starts a
+genuinely fresh line with no inherited per-line state at all.
+
+The general lesson: `SameLine()` carries more per-line text-baseline state across a
+`BeginGroup()` boundary than its "just moves the cursor" behavior suggests. For any columns
+that must align pixel-exactly, skip `SameLine()` for every column after the first and use a
+fully explicit two-axis `SetCursorPos()` instead — and verify by screenshot, not by re-deriving
+the library's internal behavior from memory, since a plausible-looking partial fix can still be
+wrong.

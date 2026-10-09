@@ -141,6 +141,7 @@ Everything here was learned building real, shipping mods ([url=https://www.nexus
 [*]89. When a fix "doesn't work" and new diagnostic logging added to explain why also never fires, suspect an upstream wrapper silently dropping data — grep every call site before adding more logging at the same layer
 [*]90. A relationship/faction system does not preclude a hardcoded "enemy by literal native class" rule sitting alongside it and evaluated first — confirm with an actual asset export, not by assuming a faction copy is sufficient
 [*]91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
+[*]92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
 [/list]
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too, because a documented dead end saves someone else the same hours: stale UObject pointers, native crashes with zero pcall-catchable trace, Mercuna navigation (not the UE navmesh), why a property write can report success and never render, DXGI/D3D hooking pitfalls, and more.
