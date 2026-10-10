@@ -200,6 +200,7 @@ PART 11 — UI, menus and companion mods
 90. A relationship/faction system does not preclude a hardcoded "enemy by literal native class" rule sitting alongside it and evaluated first — confirm with an actual asset export, not by assuming a faction copy is sufficient
 91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
 92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
+93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
 
 ---
 
@@ -4990,3 +4991,31 @@ that must align pixel-exactly, skip `SameLine()` for every column after the firs
 fully explicit two-axis `SetCursorPos()` instead — and verify by screenshot, not by re-deriving
 the library's internal behavior from memory, since a plausible-looking partial fix can still be
 wrong.
+
+## 93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
+
+A live drag-to-place system (an object that follows the camera/cursor until the user confirms
+or cancels) commonly re-computes and re-applies the object's position and/or rotation on every
+tick for as long as the interactive session is active — floor-snapping it, keeping it camera-
+relative, whatever the system is designed to do. A one-time correction applied once, right after
+the object is created — the obvious-looking place to put it — gets silently overwritten by the
+very next tick of that loop, before the user ever sees it take effect. This is easy to miss in
+testing if the correction happens to also get persisted at the END of the session (e.g. a
+generic "save whatever the object's final transform is" step runs after confirm) — the final
+RESULT can still look wrong in a way that's hard to distinguish from "the correction simply
+isn't being read," since by the time anything reads it back, the follow loop already overwrote
+it on the next tick, and no amount of changing the correction's VALUE fixes that.
+
+The fix is not to make the one-time application more aggressive or move it later — it's to stop
+treating it as one-time at all. Track the correction on a side table/variable the interactive
+loop itself reads (not consumes) on every tick, and have it add that correction to whatever
+position/rotation it was already about to apply that tick. Only clear the tracked value once the
+interactive session actually ends — by that point the object's live transform already has the
+correction baked in, so any existing "persist final state" logic picks it up for free with no
+separate apply step needed.
+
+General lesson: whenever one piece of code "sets a value once" and a SEPARATE live/interactive
+loop "re-sets that same value every tick" (a drag-to-place preview, a camera-follow cam, any
+per-frame re-sync), the one-time set is invisible for the loop's ENTIRE active duration, not just
+overwritten at the very end. A correction has to be expressed as something the live loop itself
+reads and respects every tick, not a value applied before the loop starts.
