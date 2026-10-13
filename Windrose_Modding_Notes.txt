@@ -203,6 +203,7 @@ PART 11 — UI, menus and companion mods
 93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
 94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
 95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
+96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
 
 ---
 
@@ -5076,3 +5077,31 @@ event spanning an OS focus/activation change, put the debounce at the one point 
 converge on (here: the real show/hide call itself), not on either trigger individually. And before
 concluding a fix worked, check for the effect happening with no corresponding cause from the path
 you just touched.
+
+## 96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
+
+A companion GUI window (a separate OS window, its own thread, its own D3D11 device/swapchain,
+deliberately never touching the game's own render target) crashed the whole game 100% of the
+time, the instant it opened, for one specific user — never reproducible on a different machine
+with the identical mod build, mod list, and even the identical NVIDIA driver version. Standard
+overlay/capture-hook suspects (Steam overlay, NVIDIA ShadowPlay/overlay) were ruled out by having
+the user disable both and reproduce the crash anyway. Every other installed mod was ruled out the
+same way (clean install, crash persisted). The eventual difference: the affected user had NVIDIA
+DLSS **Multi Frame Generation** set to 3x/4x.
+
+Multi Frame Generation is exclusive to RTX 50-series (Blackwell) cards — RTX 40-series and older
+only support standard (non-multi) Frame Generation, a materially different code path through
+NVIDIA's Streamline SDK. A second D3D device/window presenting in the same process, something
+that's normally a safe and standard way to build a companion tool specifically BECAUSE it avoids
+hooking or sharing the game's own swapchain, still isn't safe from MFG's frame-interpolation
+pipeline on Blackwell. No code-side workaround was found; the fix was purely a known-issue
+documentation note telling affected users to disable MFG or drop to 2x while using the companion
+tool.
+
+General lesson: if a secondary D3D device/window crashes only for specific users despite being
+architecturally isolated from the game's own rendering, check their GPU generation and DLSS Frame
+Generation MODE specifically (not just whether Frame Gen is on/off) before assuming the bug is
+unfixable or giving up the investigation — "I already use Frame Generation and it's fine for me"
+from one tester does not rule this out if that tester's card can't run Multi Frame Generation in
+the first place. A GPU-architecture-exclusive feature is an easy variable to overlook entirely if
+nobody on the dev side owns that generation of hardware.
