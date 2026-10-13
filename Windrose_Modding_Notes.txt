@@ -204,6 +204,7 @@ PART 11 — UI, menus and companion mods
 94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
 95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
 96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
+97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
 
 ---
 
@@ -5105,3 +5106,31 @@ unfixable or giving up the investigation — "I already use Frame Generation and
 from one tester does not rule this out if that tester's card can't run Multi Frame Generation in
 the first place. A GPU-architecture-exclusive feature is an easy variable to overlook entirely if
 nobody on the dev side owns that generation of hardware.
+
+## 97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
+
+A restore/load-time routine applied several things to each actor in one bundled call: a friendly-
+faction sync (property writes), an invincibility effect (a GAS-style ability-system call), and a
+component-destruction step that actually stopped another system (an AI faction's hostile targeting)
+from engaging the actor. The destructive step was deliberately deferred and staggered across several
+seconds after load, for good reason — confirmed crash-prone if run too early or too densely during
+a busy load. But because ALL three operations were bundled into the same deferred call, the actor
+was vulnerable (genuinely attackable, and able to actually die) for the ENTIRE deferred window, not
+just until the part that mattered for safety had run.
+
+The instinctive fix — shrink the deferral delay — was the wrong lever: that delay had already been
+tuned UP from a lower starting value specifically because smaller values caused real crashes on
+heavy loads, so shrinking it back risks reintroducing exactly that. The actual fix: split the
+bundle by REAL risk, not by "when it happens to run." The friendly-faction sync and the invincibility
+effect don't touch components at all — they're safe to run immediately, the same frame as the
+actor spawns, with zero deferral. Only the actual component-destroying step needs to stay on the
+slow, staggered schedule. Moving the two safe operations to run immediately closed the actual
+safety gap (the actor can no longer be killed during the window) without touching the timing that
+protects the genuinely risky operation at all.
+
+General lesson: before accepting "this whole routine has to run slowly/deferred because part of it
+is crash-prone," check whether every operation in the bundle actually shares that risk. Property
+writes and ability-system/GAS calls are usually safe to run immediately even in a context where
+component destruction isn't; splitting a bundled routine by actual operation risk, rather than
+tuning the shared delay up or down, can close a real correctness/safety gap without disturbing the
+crash-safety margin a delay was specifically tuned to provide.
