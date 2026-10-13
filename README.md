@@ -133,6 +133,8 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
 92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
 93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
+94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
+95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 

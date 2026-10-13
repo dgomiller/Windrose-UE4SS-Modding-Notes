@@ -201,6 +201,8 @@ PART 11 — UI, menus and companion mods
 91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
 92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
 93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
+94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
+95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
 
 ---
 
@@ -5019,3 +5021,58 @@ loop "re-sets that same value every tick" (a drag-to-place preview, a camera-fol
 per-frame re-sync), the one-time set is invisible for the loop's ENTIRE active duration, not just
 overwritten at the very end. A correction has to be expressed as something the live loop itself
 reads and respects every tick, not a value applied before the loop starts.
+
+## 94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
+
+A user's crash report (game fatally crashing at a specific moment, 100% reproducible on their
+machine, never on the dev machine with the same mod list/driver) was triaged entirely from the
+`.dmp` UE4SS writes, with no WinDbg/cdb available. A minidump's binary layout is documented and
+simple enough to parse directly with a general-purpose language's struct-unpacking facilities, no
+symbols needed: read the stream directory, find the Exception stream for the fault code/address,
+find the ModuleList stream for every loaded module's base/size/name, and check which module's
+range contains the faulting address — enough to answer "did this happen in the game's own code,
+a specific mod's compiled DLL, or something else entirely" before doing anything else.
+
+Extended further here: the ThreadList stream gives every thread's own stack memory region. Scanning
+every pointer-aligned value on a given thread's stack against the full module list (not a real
+stack unwind — stale stack memory can hold old, non-return-address values, so treat hits as
+suggestive, not proof) is enough to identify which thread's job matches which code, when the
+Exception stream alone only tells you about the one thread that happened to fault. Two independent
+dumps captured a day apart, from the same user, had byte-identical fault addresses and repeating
+stack-value patterns — strong evidence of a deterministic code path, not random memory corruption,
+and worth checking before spending more time on any "flaky/intermittent" theory.
+
+**A real gotcha hit while doing this**: every UE4SS-compiled mod's DLL is conventionally named the
+same thing (`dlls/main.dll`) regardless of which mod it belongs to. With more than one native
+(C++) mod installed, a bare filename match against a stack address ("main.dll" appears on this
+thread's stack, therefore it's mine) is ambiguous and can be flat wrong — two different mods'
+`main.dll` entries in the ModuleList will have completely different base addresses and sizes.
+Always match on the FULL path (and compare base addresses if truly unsure), never the basename,
+before concluding a thread belongs to your own mod's code.
+
+## 95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
+
+A companion tool window (separate OS window/thread from the game) had two independent ways to
+close on a given hotkey: a direct native key-state check (needed because the game's own input
+system can't receive the keypress once this window has stolen OS focus) and a bridge from the
+game's own input hook (works while the game has focus, i.e. while the window is closed). Hiding
+the window hands OS focus back to the game as a side effect of the native show/hide call. If the
+physical key is still held down at that exact instant, the OS redelivers a FRESH (non-repeat)
+keydown event to whichever window just regained focus — the game's input hook sees that as a
+brand-new press and immediately reopens the window, with no further input from the user. A
+self-sustaining loop results for as long as the key happens to still be down across that handoff.
+
+The trap in fixing this: a debounce added to only ONE of the two triggers can look like it worked
+(the specific symptom being tested stops) while the other trigger keeps looping entirely on its
+own — a native key-state API (Dear ImGui's `IsKeyPressed`, raw input, etc.) typically resets its
+own notion of "is this key down" on focus loss, so a still-held key reads as a brand-new edge-press
+again the moment the window regains focus, independent of whatever the game's input hook is doing.
+Confirmed by checking the log for the open/close effect happening with NO corresponding "key seen"
+line from the already-fixed trigger — that absence is the tell that a second, independent path is
+still looping on its own.
+
+General lesson: when two independent code paths can each react to what looks like "the same" input
+event spanning an OS focus/activation change, put the debounce at the one point BOTH paths actually
+converge on (here: the real show/hide call itself), not on either trigger individually. And before
+concluding a fix worked, check for the effect happening with no corresponding cause from the path
+you just touched.
