@@ -5128,6 +5128,28 @@ slow, staggered schedule. Moving the two safe operations to run immediately clos
 safety gap (the actor can no longer be killed during the window) without touching the timing that
 protects the genuinely risky operation at all.
 
+## 98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
+
+A UI tree was built from a flat, order-preserving data file: each entry carried a stable identity
+key (used by everything downstream that depends on the entry staying addressable across edits) and
+a nested display path. The ask was to make the tree's VISUAL order sortable — alphabetize it for
+browsability — without disturbing the stable identity key every other system depended on, since
+naively reordering the underlying data file had always been assumed risky.
+
+Before designing any new mechanism (an explicit sort-order field, a rewrite script, a GUI sort
+toggle), the renderer that actually builds the tree from the file was checked directly. It turned
+out to build child nodes in pure first-appearance order, with no sorting step anywhere — and the
+stable identity key was never derived from file position or path in the first place, only from its
+own explicit fields. The two concerns — "what order does this display in" and "which stable entry
+is this" — had already been fully independent the whole time; nothing had ever exploited it.
+
+The actual fix was a small addition entirely on the rendering side: sort children alphabetically at
+every level EXCEPT the one level meant to stay manually curated, recursively, with zero changes to
+the underlying data file's format or order. Lesson: when a display-order-vs-stable-identity problem
+shows up, read the code that turns stored order into displayed order before assuming you need new
+plumbing to separate them — a renderer with no sort step at all, or an identity key with no
+positional dependency, means the separation may already exist and the fix is just turning it on.
+
 General lesson: before accepting "this whole routine has to run slowly/deferred because part of it
 is crash-prone," check whether every operation in the bundle actually shares that risk. Property
 writes and ability-system/GAS calls are usually safe to run immediately even in a context where

@@ -137,6 +137,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
 96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
 97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
+98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
