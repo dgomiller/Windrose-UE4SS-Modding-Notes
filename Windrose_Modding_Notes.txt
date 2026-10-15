@@ -32,6 +32,7 @@ PART 2 — Reading live state correctly
 11. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
 12. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
 13. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
+13a. Two different hidden states can read back completely identically — reconstruct adjacency and flood-fill from a known-good seed to tell them apart
 
 PART 3 — The UE4SS Lua binding: calls, comparisons and quirks
 14. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName():ToString()` instead
@@ -205,6 +206,8 @@ PART 11 — UI, menus and companion mods
 95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
 96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
 97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
+98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
+99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
 
 ---
 
@@ -592,6 +595,36 @@ to miss until a new caller finally wants one without the other — and the safer
 splitting the bundled behaviors apart (share what's genuinely general-purpose, separately condition
 what's specific) rather than either keeping both bundled or duplicating the whole block for the new
 case.
+
+---
+
+## 13a. Two different hidden states can read back completely identically — reconstruct adjacency and flood-fill from a known-good seed to tell them apart
+
+A per-instance read (an instanced static mesh's own transform) gave exactly one bit of information per
+piece: visible (full scale) or hidden (scale zero). A "finished" piece and an "untouched" piece were
+BOTH hidden with scale zero and no other distinguishing data — the engine only reveals a piece once a
+neighbor is gone, so an untouched piece deep inside a cluster looks byte-for-byte the same as one
+that's already finished, from this one property alone.
+
+Nothing in the read-back data expressed which neighboring instances were "next to" a given one — the
+instances came back as a flat, unordered list of world positions with no grid or index. The underlying
+generation order was recoverable by sorting/bucketing on raw position: entries within a tight tolerance
+along one axis belong to the same row; rows are grouped into layers by a looser proximity test along
+the other two axes; typical adjacent-instance spacing computed from the median gap within one row rather
+than assumed as a constant (real spacing jittered).
+
+With that topology reconstructed, the two hidden states were disambiguated by direction, not data: a
+hidden instance missing a neighbor in ANY of its reconstructed directions must be sitting on the
+current exposed surface (if it had a neighbor there, that neighbor would be occupying the space and
+blocking exposure) — so it is "finished," not "untouched." Those surface instances seed a flood fill
+across the reconstructed adjacency graph; everything the flood fill reaches is finished, and everything
+it can't reach (fully interior, surrounded on every side) is still untouched.
+
+**General lesson**: when a live read-back collapses two meaningfully different states into one
+identical value, look for a structural property the data implies but doesn't store outright (here:
+spatial adjacency) and propagate outward from instances whose state is unambiguous by construction
+(here: anything touching the known-exposed boundary) rather than trying to classify every instance from
+its own value alone.
 
 ---
 
@@ -5150,9 +5183,31 @@ shows up, read the code that turns stored order into displayed order before assu
 plumbing to separate them — a renderer with no sort step at all, or an identity key with no
 positional dependency, means the separation may already exist and the fix is just turning it on.
 
-General lesson: before accepting "this whole routine has to run slowly/deferred because part of it
-is crash-prone," check whether every operation in the bundle actually shares that risk. Property
-writes and ability-system/GAS calls are usually safe to run immediately even in a context where
-component destruction isn't; splitting a bundled routine by actual operation risk, rather than
-tuning the shared delay up or down, can close a real correctness/safety gap without disturbing the
-crash-safety margin a delay was specifically tuned to provide.
+## 99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
+
+A Lua mod needed a text readout and floating world-space distance markers, without any custom widget
+assets of its own and without a compiled C++ companion. Rather than building new UMG assets, it
+located two of the GAME's own existing widget Blueprint classes by path (a generic rich-text tooltip
+widget, and the generic world-space marker widget the game's own HUD already uses for other on-map
+points of interest), instantiated them directly from script via the widget-library factory call
+(`WidgetBlueprintLibrary:Create(playerController, class, playerController)`), added them to the
+viewport, and drove them with whatever update function those classes already exposed (a text-setter
+for the tooltip, a name-setter for the marker) — the same calls the game's own code already uses on
+those classes for their native purpose.
+
+For the floating markers specifically, it combined this with a per-frame world-to-screen projection
+call (the same one any native marker/waypoint system would use) to re-position each marker widget
+every rendered frame, decoupled from a slower, budgeted detection loop that only needs to run a few
+times a second — keeping marker motion smooth while the expensive "what should be marked" logic
+stays cheap.
+
+One more thing worth keeping: a rich-text style table the tooltip widget reads from is NOT safe to
+query live (a live read of it crashed the game) — the handful of style tags actually needed were
+confirmed once by inspecting the table's asset, then hardcoded as literal tag names rather than
+looked up at runtime.
+
+**General lesson**: before authoring new UI assets or building a custom overlay for a simple
+HUD-style readout, check whether a generic widget class the game already ships (a tooltip, a marker,
+a simple label) already does the job — it can be instantiated and driven from script the same way
+the game's own code drives it, for a fraction of the asset/build work a from-scratch widget needs.
+Also applicable from a compiled C++ mod (see §75n), not just from script.

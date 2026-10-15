@@ -26,6 +26,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 11. A class-hierarchy check is a cheap, decisive way to rule out "this class structurally can't do that" before spending more time tuning a property that silently does nothing
 12. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
 13. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
+13a. Two different hidden states can read back completely identically — reconstruct adjacency and flood-fill from a known-good seed to tell them apart
 
 **Part 3 — The UE4SS Lua binding: calls, comparisons and quirks**
 
@@ -138,6 +139,7 @@ Everything here was learned building real, shipping mods (**[Living Base Enhance
 96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
 97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
 98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
+99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
