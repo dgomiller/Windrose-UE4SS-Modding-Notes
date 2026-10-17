@@ -10,6 +10,14 @@ Credit: Living Base Enhanced, where most of these findings come from, began as a
 "Living Base" by me123420 (https://www.nexusmods.com/windrose/mods/519), and some of these findings
 build on that mod's original work.
 
+A handful of entries generalize a technique first found by reading another modder's own shipped
+mod, not independently discovered here — credited at the point of use and listed together: §13a/§99
+(MineScanner, https://www.nexusmods.com/windrose/mods/565), §13b/§53e/§100/§101 (Outfitter,
+https://www.nexusmods.com/windrose/mods/566), §36a/§52a (SharedPlans + SharedPlans Sync,
+https://www.nexusmods.com/windrose/mods/564). Each entry itself is still written generalized and
+mod-agnostic, same as every other entry in this file — this credit line is about where the
+observation came from, not a claim that the technique only applies to that mod.
+
 Organised into eleven parts by topic (reorganised 2026-10-02 — section numbers changed then; cross-references inside the text were updated to the new numbers).
 
 ---
@@ -604,6 +612,8 @@ case.
 
 ## 13a. Two different hidden states can read back completely identically — reconstruct adjacency and flood-fill from a known-good seed to tell them apart
 
+*Technique origin: found by reading a third-party mod, MineScanner (see this file's intro credit list) — not independently discovered here.*
+
 A per-instance read (an instanced static mesh's own transform) gave exactly one bit of information per
 piece: visible (full scale) or hidden (scale zero). A "finished" piece and an "untouched" piece were
 BOTH hidden with scale zero and no other distinguishing data — the engine only reveals a piece once a
@@ -633,6 +643,8 @@ its own value alone.
 ---
 
 ## 13b. Reading quest/unlock progress live: the game's own Blackboard observer API is a more official path than parsing raw save data
+
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
 
 Deciding whether a specific unlock/recipe/quest state had been reached needed a live, per-key
 numeric progress value, keyed by name. Rather than locating and parsing the relevant field out of
@@ -1673,6 +1685,8 @@ content level via a `.pak`/`.ucas`/`.utoc` trio, not about spawning/scripting be
 
 ### 36a. Not every native DataAsset is a binary UAsset — some gameplay-data plugins ship genuinely plain, human-readable JSON instead
 
+*Technique origin: found by reading a third-party mod, SharedPlans + SharedPlans Sync (see this file's intro credit list) — not independently discovered here.*
+
 Before assuming a given content system needs the full binary-asset editing/cooking workflow (a
 property-type-mappings file, a legacy-container extraction tool, an Editor-based authoring project),
 check what format the game's OWN existing content for that system actually ships as. A business-
@@ -2141,6 +2155,8 @@ Data saved against a world object and keyed by class plus rounded position (text
 A restore that walks a list with a self-rescheduling timer step (next step queued from inside the finished one, one shared cursor variable) looks correct in the log until a timer chain gets duplicated once, intermittently and for reasons that were not found. The duplicate does not repeat items (the shared cursor hands each index out once) but every chain runs off the end of the list and each calls the completion callback, which starts the next whole phase once per chain; a following per-item phase with its own cursor then really runs several times (three copies of every NPC, a progress counter of 33 for 11 items, three 'ready' messages). Signature: the per-item log line for item 1 appears several times a fraction of a second apart. Fix: a completion-fired flag so only the first end-of-list call proceeds (log the ignored ones so a recurrence is visible). It cannot hurt, and it turns a multiplied restore into a harmless log line.
 
 ### 52a. A shared, world-scoped unlock flag can leave some already-connected co-op players' own clients not reflecting it — ship a cheap, independent re-trigger instead of chasing the propagation gap
+
+*Technique origin: found by reading a third-party mod, SharedPlans + SharedPlans Sync (see this file's intro credit list) — not independently discovered here.*
 
 A gameplay system records "has this been unlocked" as a single flag scoped to the WORLD/save, not
 to an individual player — so one player performing the unlocking action is meant to make it count
@@ -2778,6 +2794,8 @@ rebuild" sequence already proven to work for outfit changes on that family, whic
 tried for this specific asset — only a pre-spawn write was).
 
 ### 53e. Retargeting one instance's look without touching the shared data everyone else reads
+
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
 
 An item/gear object's visual data is commonly a single shared object referenced by every live
 instance of that class, AND by non-gameplay consumers of the same class (an inventory preview
@@ -5279,6 +5297,8 @@ positional dependency, means the separation may already exist and the fix is jus
 
 ## 99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
 
+*Technique origin: found by reading a third-party mod, MineScanner (see this file's intro credit list) — not independently discovered here.*
+
 A Lua mod needed a text readout and floating world-space distance markers, without any custom widget
 assets of its own and without a compiled C++ companion. Rather than building new UMG assets, it
 located two of the GAME's own existing widget Blueprint classes by path (a generic rich-text tooltip
@@ -5308,6 +5328,8 @@ Also applicable from a compiled C++ mod (see §75n), not just from script.
 
 ## 100. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
 
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
+
 A live visual-override system could redirect what an equipped item LOOKED like, but the actor's
 already-built composite appearance never re-evaluated it on its own. No function existed to force a
 genuine rebuild of just that one piece. The ONE path confirmed to trigger a full, correct rebuild
@@ -5332,6 +5354,8 @@ treat it as a real state machine with its own timeouts and confirmed transitions
 fail independently of the others.
 
 ## 101. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
+
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
 
 A mod needed to synchronize small amounts of custom state (a player's chosen cosmetic overrides)
 from each client to a server and back out to every other client, in both solo and hosted co-op.

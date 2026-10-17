@@ -4,6 +4,8 @@ Durable, engine-level facts about modding **Windrose** (Kraken Express, UE 5.6) 
 
 Everything here was learned building real, shipping mods (**[Living Base Enhanced](https://github.com/dgomiller/Living-Base-Enhanced-Windrose)** and its C++ companion, **[LivingBaseSpawnMenu](https://github.com/dgomiller/Living-Base-Spawn-Menu-Windrose)**, plus the spin-off **[LBE: Summonable Ghost Fighters](https://github.com/dgomiller/LBE-Summonable-Ghost-Fighters)**), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
 
+A handful of entries generalize a technique first found by reading another modder's own shipped mod, not independently discovered here: §13a/§99 from **[MineScanner](https://www.nexusmods.com/windrose/mods/565)**, §13b/§53e/§100/§101 from **[Outfitter](https://www.nexusmods.com/windrose/mods/566)**, §36a/§52a from **[SharedPlans + SharedPlans Sync](https://www.nexusmods.com/windrose/mods/564)**. Credited at the point of use too — this line is about where the observation came from, not a claim the technique only applies to that one mod.
+
 ## What's in it
 
 `Windrose_Modding_Notes.txt` — the UE4SS side (Lua + compiled C++ mods against the running game), organized into numbered sections, grouped into eleven parts by topic:

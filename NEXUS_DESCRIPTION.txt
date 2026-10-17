@@ -3,6 +3,8 @@
 
 Everything here was learned building real, shipping mods ([url=https://www.nexusmods.com/windrose/mods/535][b]Living Base Enhanced[/b][/url] and its C++ companion, LivingBaseSpawnMenu, plus the spin-off [url=https://www.nexusmods.com/windrose/mods/548][b]LBE: Summonable Ghost Fighters[/b][/url]), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
 
+A handful of entries generalize a technique first found by reading another modder's own shipped mod, not independently discovered here: §13a/§99 from [url=https://www.nexusmods.com/windrose/mods/565][b]MineScanner[/b][/url], §13b/§53e/§100/§101 from [url=https://www.nexusmods.com/windrose/mods/566][b]Outfitter[/b][/url], §36a/§52a from [url=https://www.nexusmods.com/windrose/mods/564][b]SharedPlans + SharedPlans Sync[/b][/url]. Credited at the point of use too — this line is about where the observation came from, not a claim the technique only applies to that one mod.
+
 [b]GitHub:[/b] [url=https://github.com/dgomiller/Windrose-UE4SS-Modding-Notes]github.com/dgomiller/Windrose-UE4SS-Modding-Notes[/url][/color]
 
 [size=4][b]What's in it[/b][/size]
