@@ -33,6 +33,7 @@ PART 2 — Reading live state correctly
 12. When an engine's own "give me the current live value" readback proves unreliable, tracking the same value yourself from a known start point plus elapsed time is a robust, low-effort substitute
 13. A single shared condition can silently gate two logically separate behaviors — exempting a new caller from one can disable the other without anyone noticing until live testing catches it
 13a. Two different hidden states can read back completely identically — reconstruct adjacency and flood-fill from a known-good seed to tell them apart
+13b. Reading quest/unlock progress live: the game's own Blackboard observer API is a more official path than parsing raw save data
 
 PART 3 — The UE4SS Lua binding: calls, comparisons and quirks
 14. Comparing two independently-obtained UE4SS component references with `==` is unreliable — compare `GetFName():ToString()` instead
@@ -114,6 +115,7 @@ PART 8 — Characters: appearance and animation
     53b. Related tricks from the same investigation
     53c. A second unfamiliar-struct shape exists — check which one before picking a recipe
     53d. A second, always-populated mesh-attachment array exists separately from the pick list
+    53e. Retargeting one instance's look without touching the shared data everyone else reads
 54. Cross-skeleton re-skinning: what actually determines the result
     54c. Mechanically discovering EVERY asset of a kind: a folder-shape assumption is never provably exhaustive
 55. Constructing a composite outfit from scratch: the real 3-level asset structure, what's safe to build via Lua, and what crashes
@@ -625,6 +627,26 @@ identical value, look for a structural property the data implies but doesn't sto
 spatial adjacency) and propagate outward from instances whose state is unambiguous by construction
 (here: anything touching the known-exposed boundary) rather than trying to classify every instance from
 its own value alone.
+
+---
+
+## 13b. Reading quest/unlock progress live: the game's own Blackboard observer API is a more official path than parsing raw save data
+
+Deciding whether a specific unlock/recipe/quest state had been reached needed a live, per-key
+numeric progress value, keyed by name. Rather than locating and parsing the relevant field out of
+raw save data (fragile against a save-format change, and needs its own key-name mapping), the
+game exposes an observer object specifically for this: a CDO-level factory function constructs a
+Blackboard int observer for a given player controller and a given tag name, scoped to the player
+blackboard type, and the resulting observer object has its own `GetValue()` accessor. A value at or
+above the game's own "completed" enum constant means the key is unlocked; anything else (including
+a nil read, which happens for keys that genuinely don't apply yet) is treated as "unknown" rather
+than "locked," so a caller can distinguish "confirmed not unlocked" from "couldn't tell."
+
+**General lesson**: before reading quest/unlock/progress state by locating and parsing it out of
+raw save data, check whether the game exposes a dedicated live-observer API for exactly that
+purpose — a Blackboard (or similar named-key progress store) observer factory is common in this
+engine's own gameplay systems, and reading through it is both more official and more resistant to a
+save-format change than a hand-rolled parse.
 
 ---
 
@@ -2706,6 +2728,30 @@ extending this to a walking-NPC use case should expect to need a different trigg
 class family (an untested next idea: pairing the same override with the same POST-build "force a
 rebuild" sequence already proven to work for outfit changes on that family, which was never actually
 tried for this specific asset — only a pre-spawn write was).
+
+### 53e. Retargeting one instance's look without touching the shared data everyone else reads
+
+An item/gear object's visual data is commonly a single shared object referenced by every live
+instance of that class, AND by non-gameplay consumers of the same class (an inventory preview
+mannequin, a main-menu character). Writing directly into that shared object to change one player's
+look changes it for everyone and everything reading it — including the two non-gameplay consumers,
+which is easy to forget because they aren't "a player" in any sense you'd normally be checking for.
+
+The safe pattern: for each class that needs a per-owner override, construct a CLONE of its real
+gear-data object (`StaticConstructObject`, passing the real object as the template) and pin it alive
+with the engine's generic "keep this alive" internal object flags, since nothing else holds a
+reference to a standalone clone and it would otherwise be garbage-collected. Point the clone's own
+visual-data field at whichever look's original visual asset should show, instead of mutating
+anything about the original. Then, per LIVE INSTANCE (not per class) of the gear object, swap that
+one instance's own top-level data reference to the correct clone for its current owner — never the
+shared template object. Every other instance, and the two non-gameplay consumers, keep reading the
+untouched original, because nothing about the original ever changed.
+
+**General lesson**: before writing into a data object to retarget one actor's visuals, check whether
+that object is actually SHARED template data (reused by other actors of the same class, by the
+inventory/menu preview, or by anything else) rather than a private per-instance copy. If it's shared,
+clone-and-redirect at the point of use is a small amount of extra bookkeeping for guaranteed
+isolation, versus a direct edit that silently leaks into everything else reading the same object.
 
 ---
 
@@ -5211,3 +5257,50 @@ HUD-style readout, check whether a generic widget class the game already ships (
 a simple label) already does the job — it can be instantiated and driven from script the same way
 the game's own code drives it, for a fraction of the asset/build work a from-scratch widget needs.
 Also applicable from a compiled C++ mod (see §75n), not just from script.
+
+## 100. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
+
+A live visual-override system could redirect what an equipped item LOOKED like, but the actor's
+already-built composite appearance never re-evaluated it on its own. No function existed to force a
+genuine rebuild of just that one piece. The ONE path confirmed to trigger a full, correct rebuild
+was the same one the player uses: unequip the item through the inventory UI, then re-equip it.
+
+Rather than accepting a half-measure (a cheaper mesh-swap fallback that visibly dropped other
+details), the mod drove its own UI the same way a player's input would: locate the live inventory
+slot view-model for the equipped item, invoke the same click handler the UI itself calls, wait for
+the item to actually leave the equipped slot (confirmed by re-reading the equipped state, not by
+assuming the click worked), find which temporary/bag slot it landed in, then click THAT slot to
+re-equip. This was built as an explicit multi-phase state machine (something like
+delay -> click -> wait-for-removal -> wait-for-reequip) with its own per-phase retry count and
+timeout, rather than a single fire-and-forget call — because any one step (no inventory open, no
+free slot, a slower-than-expected network round trip) can stall or fail independently, and a flat
+script would have no way to recover or report which step actually got stuck.
+
+**General lesson**: when an engine/game system only fully refreshes derived state in response to a
+specific user interaction, and no lower-level function reproduces that refresh, simulating the exact
+interaction (via the same UI handler calls the real input path uses) is a legitimate technique — but
+treat it as a real state machine with its own timeouts and confirmed transitions, not a single
+"click and assume it worked" call, since every step depends on transient UI/network state that can
+fail independently of the others.
+
+## 101. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
+
+A mod needed to synchronize small amounts of custom state (a player's chosen cosmetic overrides)
+from each client to a server and back out to every other client, in both solo and hosted co-op.
+Adding a genuinely new replicated property or a new UFUNCTION for this is usually not reachable from
+a script-only mod at all — replication is normally wired up at compile time on the actual class.
+
+Instead, it reused two generic calls the engine's own PlayerController already exposes for
+unrelated purposes: a client-to-server generic command executor, and a server-to-client generic
+text-message delivery function. Both already round-trip through the engine's real replication
+layer, so no new network plumbing was needed — the mod just prefixes its own messages with a unique
+tag, hooks both functions, and ignores anything that doesn't start with its tag. The server side
+also uses the opportunity to prune any per-player state it's holding for players who are no longer
+present, checked on every message rather than on a separate timer.
+
+**General lesson**: before concluding a script-only mod can't synchronize custom state across the
+network, check whether the game's own controller/player classes expose a GENERIC, already-replicated
+command or messaging call (not built for your use case, but not restricted to the engine's own
+use either) that can carry an arbitrary tagged payload. Piggybacking on one of those avoids needing
+compiled-code-level replication setup entirely, at the cost of being responsible for your own
+message framing (a tag prefix, and parsing/ignoring anything that isn't yours).
