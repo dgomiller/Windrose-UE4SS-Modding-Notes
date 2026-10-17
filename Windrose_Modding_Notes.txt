@@ -90,6 +90,7 @@ PART 6 — Assets, classes and pak files
 34. Resolving a Blueprint's own generated CLASS via the asset registry needs its exact indexed name — not the bare asset name
 35. A Blueprint class can refuse a plain asset load while the game's AssetRegistry returns it — and a menu-time prewarm does not survive the world load (2026-10-02)
 36. Content-replacer paks (asset overrides): what's possible from Lua and what isn't
+36a. Not every native DataAsset is a binary UAsset -- some gameplay-data plugins ship genuinely plain, human-readable JSON instead
 37. A binary-asset editing library needs the game's own type-mappings file loaded explicitly, or a native asset silently degrades to an unreadable raw blob
 38. Patching a single package inside an already-shipped Zen/IoStore container, without its original staging tree or a full re-cook
 39. Constructing a genuinely new tagged property from scratch in a cooked asset needs an extra type-descriptor field the editing library won't infer for you
@@ -108,6 +109,7 @@ PART 7 — Spawning, the world and persistence
 50. Persisting and restoring actor state across a world load
 51. Saved per-object data keyed by position loses its owner when the object moves — re-key it (2026-10-01)
 52. Sequential restore chains: make the completion callback idempotent — duplicate timer chains share the cursor and each one fires it (2026-10-01)
+52a. A shared, world-scoped unlock flag can leave some already-connected co-op players' own clients not reflecting it -- ship a cheap, independent re-trigger instead of chasing the propagation gap
 
 PART 8 — Characters: appearance and animation
 53. The composite (appearance) system — what sticks and what doesn't
@@ -1669,6 +1671,27 @@ content level via a `.pak`/`.ucas`/`.utoc` trio, not about spawning/scripting be
   likely-intentional, not likely-corrupt, and don't expect a different tool or a re-download to
   fix it.
 
+### 36a. Not every native DataAsset is a binary UAsset — some gameplay-data plugins ship genuinely plain, human-readable JSON instead
+
+Before assuming a given content system needs the full binary-asset editing/cooking workflow (a
+property-type-mappings file, a legacy-container extraction tool, an Editor-based authoring project),
+check what format the game's OWN existing content for that system actually ships as. A business-
+logic-style gameplay-data plugin (recipes, trade requirements, gameplay-tag-driven unlock data) was
+found shipping its DataAssets as literal, directly-parseable JSON files inside an ordinary pak —
+confirmed by opening one with a plain JSON parser with zero preprocessing, no binary header, no
+asset-editing library involved at all.
+
+This means authoring new content of that specific kind needs none of the heavier asset-editing
+machinery documented elsewhere in this section: extract the pak with any legacy-pak tool, edit the
+JSON directly in a text editor (new entries can be modeled directly on a shipped example — copy one,
+rename it, change its data fields), then repack it into a plain pak with the same tool. No type-
+mappings file, no retoc/legacy-container conversion, no Unreal Editor project at all.
+
+**General lesson**: "this needs the full binary-asset toolchain" is a default assumption worth
+checking per content SYSTEM, not applying uniformly across the whole game — a specific gameplay-data
+plugin can trade binary serialization for plain JSON specifically to make its own content easier to
+iterate on, and that choice is directly observable by just opening one of its shipped files.
+
 ---
 
 ## 37. A binary-asset editing library needs the game's own type-mappings file loaded explicitly, or a native asset silently degrades to an unreadable raw blob
@@ -2116,6 +2139,31 @@ Data saved against a world object and keyed by class plus rounded position (text
 ## 52. Sequential restore chains: make the completion callback idempotent — duplicate timer chains share the cursor and each one fires it (2026-10-01)
 
 A restore that walks a list with a self-rescheduling timer step (next step queued from inside the finished one, one shared cursor variable) looks correct in the log until a timer chain gets duplicated once, intermittently and for reasons that were not found. The duplicate does not repeat items (the shared cursor hands each index out once) but every chain runs off the end of the list and each calls the completion callback, which starts the next whole phase once per chain; a following per-item phase with its own cursor then really runs several times (three copies of every NPC, a progress counter of 33 for 11 items, three 'ready' messages). Signature: the per-item log line for item 1 appears several times a fraction of a second apart. Fix: a completion-fired flag so only the first end-of-list call proceeds (log the ignored ones so a recurrence is visible). It cannot hurt, and it turns a multiplied restore into a harmless log line.
+
+### 52a. A shared, world-scoped unlock flag can leave some already-connected co-op players' own clients not reflecting it — ship a cheap, independent re-trigger instead of chasing the propagation gap
+
+A gameplay system records "has this been unlocked" as a single flag scoped to the WORLD/save, not
+to an individual player — so one player performing the unlocking action is meant to make it count
+for every player in that co-op session, not just themselves. In practice, a player already connected
+before the unlock happened can be left with their own client not reflecting it (no error, just a
+stale local view) — a real propagation/refresh gap between "the shared flag changed" and "every
+already-connected client's own UI re-evaluates it," not something an individual mod can close from
+outside the engine's own replication internals.
+
+**The workaround, observed in a real third-party content mod**: rather than attempting to force or
+detect the refresh, offer every player an independent, trivially-cheap action that performs the
+EXACT SAME flag-setting write themselves. A player whose client already reflects the shared state
+has no reason to use it; a player stuck with a stale view can use it to redundantly re-apply the
+identical result on their own initiative, closing the gap without the mod needing to know the gap
+exists or when it occurred. Implemented as a second, nearly-free version of the same unlock action,
+gated independently (a separate requirement/condition check) so it isn't hidden by whatever
+"already unlocked" gating guards the original action.
+
+**General lesson**: when a piece of state is deliberately scoped to be shared across every
+participant in a multiplayer session, don't assume the moment it changes is the moment every
+connected client's own view of it updates — and when you can't fix or observe that propagation gap
+directly, a redundant, cheap, player-initiated re-application of the identical effect is a robust,
+engine-agnostic escape hatch that works regardless of why the gap happened.
 
 ---
 
