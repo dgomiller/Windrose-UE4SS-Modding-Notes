@@ -169,6 +169,7 @@ PART 10 — Rendering: text, fonts, lighting, camera and time
 72. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
 73. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
 74. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+74a. Building a custom rotatable/zoomable live preview by driving the game's OWN existing capture camera and subject, not a new one
 
 PART 11 — UI, menus and companion mods
 75. Compiled C++ UE4SS mods: rendering an interactive overlay safely
@@ -220,6 +221,9 @@ PART 11 — UI, menus and companion mods
 97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
 98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
 99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
+100. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
+101. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
+102. Finding a named child part of a dynamically-created UMG widget instance from script, when neither the by-name lookup nor the widget-tree path works
 
 ---
 
@@ -4278,6 +4282,37 @@ value against what the untouched clock would have reached in that same span — 
 like a perfect, exact freeze and still be silently wrong over the timescales real usage actually
 involves.
 
+### 74a. Building a custom rotatable/zoomable live preview by driving the game's OWN existing capture camera and subject, not a new one
+
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
+
+A UI needed a live, player-rotatable, zoomable 3D preview of a character. Rather than spawning a new
+camera/scene-capture setup from scratch (real setup cost, and a second render path to keep in sync
+with the game's own), the existing scene-capture component the game ALREADY uses to render its own
+inventory preview was found live (by class, filtered to the specific actor/owner name the feature
+needed) and driven directly:
+- **Rotation** is the SUBJECT's own relative yaw, written directly on its mesh component — not a
+  camera orbit. Moving the capture's own transform was tried first and had no visible effect at all
+  (the preview is driven by the capture's render, not by anything about where its owning actor sits).
+- **Zoom** is the capture component's own `FOVAngle` (perspective) or `OrthoWidth` (orthographic) —
+  detected at runtime via the capture's projection-type property, since the same UI needed to work
+  whichever mode the game's own capture happened to use.
+- **Framing** (keeping the subject fully in view while panning) reused a lift/offset already needed
+  for an unrelated reason (dodging a UI panel that otherwise overlapped the preview).
+- The render TARGET itself was temporarily resized larger while the UI is open, for a sharper image,
+  and restored to its original size on close — a plain follow-up, once the right render target was
+  identified, not a separate discovery.
+
+Every value touched (original transform, original FOV/width, original render target size) is
+captured once and restored exactly on close, so nothing about the game's own normal UI is left
+altered after the custom view is dismissed.
+
+**General lesson**: before building new render infrastructure for a custom live preview, check
+whether the game already renders an equivalent preview somewhere (an inventory screen, a character
+creator, a map) via a scene-capture/camera component that can be found live and driven directly —
+reusing it is both cheaper and automatically consistent with the game's own established look,
+versus a second, separately-maintained render path.
+
 ---
 
 # PART 11 — UI, menus and companion mods
@@ -5376,3 +5411,30 @@ command or messaging call (not built for your use case, but not restricted to th
 use either) that can carry an arbitrary tagged payload. Piggybacking on one of those avoids needing
 compiled-code-level replication setup entirely, at the cost of being responsible for your own
 message framing (a tag prefix, and parsing/ignoring anything that isn't yours).
+
+## 102. Finding a named child part of a dynamically-created UMG widget instance from script, when neither the by-name lookup nor the widget-tree path works
+
+*Technique origin: found by reading a third-party mod, Outfitter (see this file's intro credit list) — not independently discovered here.*
+
+A mod built its own UMG widgets (containing named parts: an image, several buttons, text blocks) and
+needed to find and drive those specific named parts from script after creating an instance. The
+engine's own "get a child widget by its design-time name" function was not callable at all through
+the script-reflection binding ("attempt to call a TrivialObject value" — the same unbound-method
+signature documented elsewhere in this file), and the natural-looking `<widget instance>.WidgetTree.
+<partName>` property path did not resolve to the part either.
+
+**The working alternative**: one bulk "find every object of this class" sweep per relevant widget
+class (one pass each for Image, Button, TextBlock, and so on, not the whole object universe at
+once), then for each found object, pattern-match its own full object PATH against the owning widget
+instance's path (every part's path contains its owning instance's path as a prefix, followed by the
+part's own name). This builds a name -> object lookup per widget instance, cached and only
+re-scanned when it's gone stale (a lookup miss after new instances were created). The owning
+instance's OWN path is resolved the same way callers already resolve any object's path elsewhere in
+this file (full object name, minus the leading class), so no new resolution primitive was needed —
+just a different direction to apply it in (descend from a sweep rather than from a known property).
+
+**General lesson**: when a reflection binding won't call a container's own "get child by name"
+accessor, and the obvious nested-property path to a child doesn't resolve either, a class-scoped
+bulk object sweep plus a path-prefix match against the known owning instance is a reliable fallback
+— it works for any container/child relationship expressed only through object naming and hierarchy,
+not just this specific widget system.

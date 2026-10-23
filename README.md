@@ -145,6 +145,7 @@ A handful of entries generalize a technique first found by reading another modde
 99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
 100. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
 101. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
+102. Finding a named child part of a dynamically-created UMG widget instance from script, when neither the by-name lookup nor the widget-tree path works
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
