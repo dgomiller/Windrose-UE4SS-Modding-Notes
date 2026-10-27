@@ -4,7 +4,7 @@ Durable, engine-level facts about modding **Windrose** (Kraken Express, UE 5.6) 
 
 Everything here was learned building real, shipping mods (**[Living Base Enhanced](https://github.com/dgomiller/Living-Base-Enhanced-Windrose)** and its C++ companion, **[LivingBaseSpawnMenu](https://github.com/dgomiller/Living-Base-Spawn-Menu-Windrose)**, plus the spin-off **[LBE: Summonable Ghost Fighters](https://github.com/dgomiller/LBE-Summonable-Ghost-Fighters)**), then generalized and stripped of anything specific to those mods' own code. A few entries use a specific function name as a worked example of applying a technique — the technique is what's durable, not the name.
 
-A handful of entries generalize a technique first found by reading another modder's own shipped mod, not independently discovered here: §13a/§99 from **[MineScanner](https://www.nexusmods.com/windrose/mods/565)**, §13b/§53e/§100/§101 from **[Outfitter](https://www.nexusmods.com/windrose/mods/566)**, §36a/§52a from **[SharedPlans + SharedPlans Sync](https://www.nexusmods.com/windrose/mods/564)**. Credited at the point of use too — this line is about where the observation came from, not a claim the technique only applies to that one mod.
+A handful of entries generalize a technique first found by reading another modder's own shipped mod, not independently discovered here: §13a/§100 from **[MineScanner](https://www.nexusmods.com/windrose/mods/565)**, §13b/§53e/§101/§102 from **[Outfitter](https://www.nexusmods.com/windrose/mods/566)**, §36a/§52a from **[SharedPlans + SharedPlans Sync](https://www.nexusmods.com/windrose/mods/564)**. Credited at the point of use too — this line is about where the observation came from, not a claim the technique only applies to that one mod.
 
 ## What's in it
 
@@ -104,48 +104,49 @@ A handful of entries generalize a technique first found by reading another modde
 64. Forcing a foreign controller/animation-instance pair onto an actor can fix locomotion while leaving its real combat animation completely unreachable — the attack sequence can be baked directly into that specific character family's own animation graph, not driven through a generic system
 65. Out-of-combat AI characters are capped by their walk gait, not by the max-walk-speed property — measure before tuning, and check a property exists before trusting a write (2026-10-02)
 66. Where NPC stats live: per-class ability-system params and default-attribute effects, not a level number (2026-10-02, from the file inventory only — not tried live)
+67. Disabling actor collision entirely breaks a character's own movement component — override collision RESPONSE instead, and a camera-direction free-fly technique built on top
 
 **Part 10 — Rendering: text, fonts, lighting, camera and time**
 
-67. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
-68. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
-69. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
-70. Colour written to a text-render component is treated as linear, not sRGB
-71. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
-72. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
-73. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
-74. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
+68. A text-render component only draws fonts that were baked offline — runtime/UI fonts load fine and produce zero glyphs
+69. Baking a custom offline font headlessly with the editor's Python, and the four ways the conversion clips or smears glyphs
+70. Font licences decide whether a font can go in a distributed mod — "free" and "non-commercial" are not the same as "redistributable"
+71. Colour written to a text-render component is treated as linear, not sRGB
+72. Making one object's light independent of the world's lighting: lighting channels plus zeroing the indirect bounce
+73. A spring-arm/boom camera's two offset properties live in different reference frames — mixing them up produces an "orbiting" camera that looks centered only while facing one direction
+74. A collision volume set to "query only" doesn't physically obstruct movement, but it still blocks a third-person camera's own collision-avoidance trace
+75. A day/night cycle's "current time" can be computed from real elapsed time rather than accumulated per-tick — disabling the component's tick then only pauses the VISIBLE application of that value, not its underlying progression
 
 **Part 11 — UI, menus and companion mods**
 
-75. Compiled C++ UE4SS mods — rendering an interactive overlay safely
-76. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
-77. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
-78. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
-79. In Dear ImGui a row's height is its tallest item
-80. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
-81. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
-82. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
-83. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
-84. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
-85. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
-86. Integrating with the "R5 Mod Settings" companion mod — registering a settings page, reading values back, keybind vs. toggle live-update rules (and a real crash trap), and a more scalable auto-generated-manifest pattern
-87. A UE4SS-reflected UFunction call requires every parameter explicitly, even ones with a C++ default value
-88. A widget object surviving IsValid() across a level transition is not proof it's still mounted in the viewport — own your own overlay widget instead of adopting one the engine created
-89. When a fix "doesn't work" and new diagnostic logging added to explain why also never fires, suspect an upstream wrapper silently dropping data — grep every call site before adding more logging at the same layer
-90. A relationship/faction system does not preclude a hardcoded "enemy by literal native class" rule sitting alongside it and evaluated first — confirm with an actual asset export, not by assuming a faction copy is sufficient
-91. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
-92. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
-93. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
-94. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
-95. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
-96. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
-97. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
-98. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
-99. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
-100. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
-101. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
-102. Finding a named child part of a dynamically-created UMG widget instance from script, when neither the by-name lookup nor the widget-tree path works
+76. Compiled C++ UE4SS mods — rendering an interactive overlay safely
+77. A UI helper function called more than once per frame with a literal widget identifier will eventually collide with itself
+78. An immediate-mode GUI library's "pin this widget to the trailing/leading end of a bar" flag does not right/left-align it into unused space — it only prevents overflow
+79. Scaling an entire Dear ImGui window (v1.92) without touching any hard-coded pixel sizes
+80. In Dear ImGui a row's height is its tallest item
+81. A tree UI built by splitting a delimited display string has no escaping — a literal delimiter character inside what's meant to be one leaf label silently creates extra nesting
+82. Held-down UI buttons feeding a script mod: append to a queue file and drain it in batches, never a single-slot file (2026-10-01)
+83. A persistent status file one side writes and another polls needs an explicit resync on load, not just a write-on-change
+84. A compiled/hardcoded UI list generated once from a spreadsheet needs its own regeneration and rebuild step — editing the interpreted-language source alone does nothing for it
+85. Extending an existing array anywhere but its true trailing end silently shifts every later entry's flattened index, corrupting an already-generated external mapping
+86. A curated menu config cannot be rebuilt from game config: map old indices to new by identity, and never insert mid-order (2026-10-01)
+87. Integrating with the "R5 Mod Settings" companion mod — registering a settings page, reading values back, keybind vs. toggle live-update rules (and a real crash trap), and a more scalable auto-generated-manifest pattern
+88. A UE4SS-reflected UFunction call requires every parameter explicitly, even ones with a C++ default value
+89. A widget object surviving IsValid() across a level transition is not proof it's still mounted in the viewport — own your own overlay widget instead of adopting one the engine created
+90. When a fix "doesn't work" and new diagnostic logging added to explain why also never fires, suspect an upstream wrapper silently dropping data — grep every call site before adding more logging at the same layer
+91. A relationship/faction system does not preclude a hardcoded "enemy by literal native class" rule sitting alongside it and evaluated first — confirm with an actual asset export, not by assuming a faction copy is sufficient
+92. A per-session cache reloaded on "has this ever loaded" rather than "does the id match what's currently cached" silently serves stale data after a context switch — and the same bug can exist in one function while a sibling function in the same file already has the correct check
+93. Two Dear ImGui columns built with BeginGroup/SameLine can fail to top-align when one column's last row calls AlignTextToFramePadding — its text baseline can leak across SameLine() into the other column's first item
+94. A one-time correction applied before an interactive per-tick follow loop starts is invisible for the loop's entire active duration, not merely overwritten once
+95. Minidump thread-stack triage without a debugger: two UE4SS mods can ship an identically-named compiled DLL, and matching the full path (not the basename) matters
+96. Two independent triggers reacting to "the same" keypress across an OS focus handoff can form a self-sustaining open/close loop — debounce where they converge, not either trigger alone
+97. A standalone companion window with its own isolated D3D device can still crash under NVIDIA DLSS Multi Frame Generation on RTX 50-series cards, even when it was built specifically to avoid the game's own swapchain
+98. A "deferred because crash-prone" batch routine can bundle safe operations together with genuinely risky ones — split it instead of shrinking the safety delay that protects the risky part
+99. Before building new infrastructure to decouple "display order" from "stable identity," check whether the renderer already treats them as separate
+100. A companion mod can draw on-screen info without building any UI of its own — instantiate the game's OWN widget Blueprint classes and drive them with their existing update calls
+101. When no API forces a real rebuild, replay the exact user interaction that does — as an explicit, resumable state machine
+102. Piggybacking a mod's own sync messages on a generic RPC the engine already exposes, instead of adding a new replicated property
+103. Finding a named child part of a dynamically-created UMG widget instance from script, when neither the by-name lookup nor the widget-tree path works
 
 Every entry is a specific, confirmed-live finding — not a guess, not "should work in theory." Where something was tried and failed, that's recorded too (a documented dead end saves someone else the same hours).
 
